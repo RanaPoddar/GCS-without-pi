@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Team PUSHPAK Mission Control</title>
+    
+    <!-- Leaflet for map -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <!-- Leaflet Draw for polygons -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
+    <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+    
+    <!-- Socket.IO -->
+    <script src="/socket.io/socket.io.js"></script>
+    
+    <!-- JSZip for KML parsing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    
+    <!-- toGeoJSON for KML to GeoJSON -->
+    <script src="https://unpkg.com/@mapbox/togeojson@0.16.2/togeojson.js"></script>
+    
+    <link rel="stylesheet" href="mission_control.css">
+</head>
+<body>
+    <div class="dashboard-container">
+        <!-- Header -->
+        <header class="dashboard-header">
+            <div class="header-left">
+                <h1 class="logo">
+                    <span class="logo-icon"></span>
+                    Team PUSHPAK Mission Control
+                </h1>
+            </div>
+            <div class="header-center">
+                <div class="mission-status" id="missionStatus">
+                    <span class="status-indicator status-idle"></span>
+                    <span class="status-text">IDLE</span>
+                </div>
+            </div>
+            <div class="header-right">
+                <div class="drone-connections">
+                    <div class="drone-connection-item">
+                        <span class="drone-label">Drone 1</span>
+                        <span class="drone-status-indicator" id="drone1StatusIndicator">●</span>
+                        <span class="drone-status-text" id="drone1StatusText">Disconnected</span>
+                        <button class="reconnect-btn" id="reconnectDrone1" title="Reconnect Drone 1">⟲</button>
+                    </div>
+                    <div class="drone-connection-item">
+                        <span class="drone-label">Drone 2</span>
+                        <span class="drone-status-indicator" id="drone2StatusIndicator">●</span>
+                        <span class="drone-status-text" id="drone2StatusText">Disconnected</span>
+                        <button class="reconnect-btn" id="reconnectDrone2" title="Reconnect Drone 2">⟲</button>
+                    </div>
+                </div>
+                <div class="connection-status" id="connectionStatus">
+                    <span class="connection-indicator offline"></span>
+                    <span>Server: Disconnected</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Dashboard Grid -->
+        <div class="dashboard-grid">
+            <!-- Left Panel: Mission Setup & Control -->
+            <aside class="left-panel">
+                <!-- Mission Upload Section -->
+                <div class="panel-section">
+                    <h3 class="section-title">
+                        <span class="section-icon">📂</span>
+                        Mission Planning
+                    </h3>
+                    
+                    <div class="upload-zone" id="uploadZone">
+                        <input type="file" id="kmlFileInput" accept=".kml,.kmz" style="display: none;">
+                        <div class="upload-content">
+                            <div class="upload-icon">📤</div>
+                            <p class="upload-text">Drop KML/KMZ file here</p>
+                            <p class="upload-subtext">or click to browse</p>
+                        </div>
+                    </div>
+                    
+                    <div id="missionInfo" class="mission-info hidden">
+                        <div class="info-item">
+                            <span class="info-label">File:</span>
+                            <span class="info-value" id="fileName">-</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Waypoints:</span>
+                            <span class="info-value" id="waypointCount">0</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Area:</span>
+                            <span class="info-value" id="missionArea">0 ha</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Mission Parameters -->
+                <div class="panel-section">
+                    <h3 class="section-title">
+                        <span class="section-icon">⚙️</span>
+                        Parameters
+                    </h3>
+                    
+                    <div class="parameter-grid">
+                        <div class="param-group">
+                            <label>Altitude (m)</label>
+                            <input type="number" id="altitude" value="50" min="10" max="200" step="5">
+                        </div>
+                        
+                        <div class="param-group">
+                            <label>Speed (m/s)</label>
+                            <input type="number" id="speed" value="5" min="1" max="15" step="0.5">
+                        </div>
+                        
+                        <div class="param-group">
+                            <label>Overlap (%)</label>
+                            <input type="number" id="overlap" value="70" min="50" max="90" step="5">
+                        </div>
+                        
+                        <div class="param-group">
+                            <label>Grid Angle (°)</label>
+                            <input type="number" id="gridAngle" value="0" min="0" max="180" step="5">
+                        </div>
+                    </div>
+                    
+                    <button class="btn btn-secondary" id="generateGrid">
+                        <span class="btn-icon">🔲</span>
+                        Generate Survey Grid
+                    </button>
+                </div>
+
+                <!-- Mission Control Actions -->
+                <div class="panel-section">
+                    <h3 class="section-title">
+                        <span class="section-icon">🎮</span>
+                        Mission Control
+                    </h3>
+                    
+                    <div class="action-buttons">
+                        <button class="btn btn-primary" id="startMission" disabled>
+                            <span class="btn-icon">▶️</span>
+                            Start Mission
+                        </button>
+                        
+                        <button class="btn btn-warning" id="pauseMission" disabled>
+                            <span class="btn-icon">⏸️</span>
+                            Pause
+                        </button>
+                        
+                        <button class="btn btn-danger" id="stopMission" disabled>
+                            <span class="btn-icon">⏹️</span>
+                            Stop
+                        </button>
+                        
+                        <button class="btn btn-secondary" id="returnToHome" disabled>
+                            <span class="btn-icon">🏠</span>
+                            Return to Home
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Mission Progress -->
+                <div class="panel-section">
+                    <h3 class="section-title">
+                        <span class="section-icon">📊</span>
+                        Progress
+                    </h3>
+                    
+                    <div class="progress-container">
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="progressFill" style="width: 0%"></div>
+                        </div>
+                        <div class="progress-stats">
+                            <div class="stat-item">
+                                <span class="stat-label">Complete:</span>
+                                <span class="stat-value" id="progressPercent">0%</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-label">Est. Time:</span>
+                                <span class="stat-value" id="estTime">--:--</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-label">Elapsed:</span>
+                                <span class="stat-value" id="elapsedTime">00:00</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Center Panel: Map View -->
+            <main class="center-panel">
+                <div class="map-container">
+                    <div id="map"></div>
+                    
+                    <!-- Map Controls Overlay -->
+                    <div class="map-controls">
+                        <button class="map-btn" id="centerMap" title="Center on Drones">
+                            <span>🎯</span>
+                        </button>
+                        <button class="map-btn" id="toggleLayers" title="Toggle Layers">
+                            <span>🗺️</span>
+                        </button>
+                        <button class="map-btn" id="clearMission" title="Clear Mission">
+                            <span>🗑️</span>
+                        </button>
+                    </div>
+                    
+                    <!-- Layer Control Panel -->
+                    <div class="layer-panel hidden" id="layerPanel">
+                        <h4>Map Layers</h4>
+                        <label class="layer-option">
+                            <input type="checkbox" id="showBoundary" checked>
+                            <span>Mission Boundary</span>
+                        </label>
+                        <label class="layer-option">
+                            <input type="checkbox" id="showGrid" checked>
+                            <span>Survey Grid</span>
+                        </label>
+                        <label class="layer-option">
+                            <input type="checkbox" id="showDronePaths" checked>
+                            <span>Drone Paths</span>
+                        </label>
+                        <label class="layer-option">
+                            <input type="checkbox" id="showDetections">
+                            <span>Detections</span>
+                        </label>
+                    </div>
+                </div>
+            </main>
+
+            <!-- Right Panel: Drone Status -->
+            <aside class="right-panel">
+                <!-- Drone 1 Status -->
+                <div class="panel-section drone-panel" id="drone1Panel">
+                    <h3 class="section-title drone-title">
+                        <span class="drone-icon">🛸</span>
+                        Drone 1
+                        <span class="drone-badge badge-offline" id="drone1Status">OFFLINE</span>
+                    </h3>
+                    <div style="text-align: center; margin-bottom: 10px;">
+                        <span class="drone-badge badge-offline" id="drone1Armed">DISARMED</span>
+                    </div>
+                    
+                    <!-- HUD Status Display -->
+                    <div class="hud-status">
+                        <div class="hud-row">
+                            <span class="hud-label">ALT</span>
+                            <span class="hud-value" id="drone1AltHud">--</span>
+                        </div>
+                        <div class="hud-row">
+                            <span class="hud-label">SPD</span>
+                            <span class="hud-value" id="drone1SpdHud">--</span>
+                        </div>
+                        <div class="hud-row">
+                            <span class="hud-label">BAT</span>
+                            <span class="hud-value" id="drone1BatHud">--%</span>
+                        </div>
+                        <div class="hud-row">
+                            <span class="hud-label">VOLT</span>
+                            <span class="hud-value" id="drone1VoltHud">--V</span>
+                        </div>
+                    </div>
+                    
+                    <div class="telemetry-grid">
+                        <div class="telemetry-item">
+                            <div class="telemetry-icon">📍</div>
+                            <div class="telemetry-data">
+                                <span class="telemetry-label">LAT</span>
+                                <span class="telemetry-value" id="drone1Lat">--</span>
+                            </div>
+                        </div>
+                        
+                        <div class="telemetry-item">
+                            <div class="telemetry-icon">📍</div>
+                            <div class="telemetry-data">
+                                <span class="telemetry-label">LON</span>
+                                <span class="telemetry-value" id="drone1Lon">--</span>
+                            </div>
+                        </div>
+                        
+                        <div class="telemetry-item">
+                            <div class="telemetry-icon">⬆️</div>
+                            <div class="telemetry-data">
+                                <span class="telemetry-label">ALT</span>
+                                <span class="telemetry-value" id="drone1Alt">--</span>
+                            </div>
+                        </div>
+                        
+                        <div class="telemetry-item">
+                            <div class="telemetry-icon">🧭</div>
+                            <div class="telemetry-data">
+                                <span class="telemetry-label">HDG</span>
+                                <span class="telemetry-value" id="drone1Heading">--</span>
+                            </div>
+                        </div>
+                        
+                        <div class="telemetry-item">
+                            <div class="telemetry-icon">⚡</div>
+                            <div class="telemetry-data">
+                                <span class="telemetry-label">SPD</span>
+                                <span class="telemetry-value" id="drone1Speed">--</span>
+                            </div>
+                        </div>
+                        
+                        <div class="telemetry-item">
+                            <div class="telemetry-icon">📡</div>
+                            <div class="telemetry-data">
+                                <span class="telemetry-label">GPS</span>
+                                <span class="telemetry-value" id="drone1Gps">No Fix</span>
+                            </div>
+                        </div>
+                        
+                        <div class="telemetry-item">
+                            <div class="telemetry-icon">🛰️</div>
+                            <div class="telemetry-data">
+                                <span class="telemetry-label">MODE</span>
+                                <span class="telemetry-value" id="drone1Mode">STANDBY</span>
+                            </div>
+                        </div>
+                        
+                        <div class="telemetry-item">
+                            <div class="telemetry-icon">🎯</div>
+                            <div class="telemetry-data">
+                                <span class="telemetry-label">DET</span>
+                                <span class="telemetry-value" id="drone1Detections">0</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Battery Bar -->
+                    <div class="battery-container">
+                        <span class="battery-label">Battery</span>
+                        <div class="battery-indicator">
+                            <div class="battery-fill" id="drone1Battery" style="width: 0%"></div>
+                        </div>
+                        <span class="battery-text" id="drone1BatteryText">--%</span>
+                    </div>
+                </div>
+
+                <!-- Drone 2 Status -->
+                <div class="panel-section drone-panel" id="drone2Panel">
+                    <h3 class="section-title drone-title">
+                        <span class="drone-icon">🛸</span>
+                        Drone 2
+                        <span class="drone-badge badge-offline" id="drone2Status">OFFLINE</span>
+                    </h3>
+                    <div style="text-align: center; margin-bottom: 10px;">
+                        <span class="drone-badge badge-offline" id="drone2Armed">DISARMED</span>
+                    </div>
+                    
+                    <!-- HUD Status Display -->
+                    <div class="hud-status">
+                        <div class="hud-row">
+                            <span class="hud-label">ALT</span>
+                            <span class="hud-value" id="drone2AltHud">--</span>
+                        </div>
+                        <div class="hud-row">
+                            <span class="hud-label">SPD</span>
+                            <span class="hud-value" id="drone2SpdHud">--</span>
+                        </div>
+                        <div class="hud-row">
+                            <span class="hud-label">BAT</span>
+                            <span class="hud-value" id="drone2BatHud">--%</span>
+                        </div>
+                        <div class="hud-row">
+                            <span class="hud-label">VOLT</span>
+                            <span class="hud-value" id="drone2VoltHud">--V</span>
+                        </div>
+                    </div>
+                    
+                    <div class="telemetry-grid">
+                        <div class="telemetry-item">
+                            <div class="telemetry-icon">📍</div>
+                            <div class="telemetry-data">
+                                <span class="telemetry-label">LAT</span>
+                                <span class="telemetry-value" id="drone2Lat">--</span>
+                            </div>
+                        </div>
+                        
+                        <div class="telemetry-item">
+                            <div class="telemetry-icon">📍</div>
+                            <div class="telemetry-data">
+                                <span class="telemetry-label">LON</span>
+                                <span class="telemetry-value" id="drone2Lon">--</span>
+                            </div>
+                        </div>
+                        
+                        <div class="telemetry-item">
+                            <div class="telemetry-icon">⬆️</div>
+                            <div class="telemetry-data">
+                                <span class="telemetry-label">ALT</span>
+                                <span class="telemetry-value" id="drone2Alt">--</span>
+                            </div>
+                        </div>
+                        
+                        <div class="telemetry-item">
+                            <div class="telemetry-icon">🧭</div>
+                            <div class="telemetry-data">
+                                <span class="telemetry-label">HDG</span>
+                                <span class="telemetry-value" id="drone2Heading">--</span>
+                            </div>
+                        </div>
+                        
+                        <div class="telemetry-item">
+                            <div class="telemetry-icon">⚡</div>
+                            <div class="telemetry-data">
+                                <span class="telemetry-label">SPD</span>
+                                <span class="telemetry-value" id="drone2Speed">--</span>
+                            </div>
+                        </div>
+                        
+                        <div class="telemetry-item">
+                            <div class="telemetry-icon">📡</div>
+                            <div class="telemetry-data">
+                                <span class="telemetry-label">GPS</span>
+                                <span class="telemetry-value" id="drone2Gps">No Fix</span>
+                            </div>
+                        </div>
+                        
+                        <div class="telemetry-item">
+                            <div class="telemetry-icon">🛰️</div>
+                            <div class="telemetry-data">
+                                <span class="telemetry-label">MODE</span>
+                                <span class="telemetry-value" id="drone2Mode">STANDBY</span>
+                            </div>
+                        </div>
+                        
+                        <div class="telemetry-item">
+                            <div class="telemetry-icon">🎯</div>
+                            <div class="telemetry-data">
+                                <span class="telemetry-label">DET</span>
+                                <span class="telemetry-value" id="drone2Detections">0</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Battery Bar -->
+                    <div class="battery-container">
+                        <span class="battery-label">Battery</span>
+                        <div class="battery-indicator">
+                            <div class="battery-fill" id="drone2Battery" style="width: 0%"></div>
+                        </div>
+                        <span class="battery-text" id="drone2BatteryText">--%</span>
+                    </div>
+                </div>
+
+                <!-- System Alerts -->
+                <div class="panel-section">
+                    <h3 class="section-title">
+                        <span class="section-icon">⚠️</span>
+                        Alerts
+                    </h3>
+                    <div class="alerts-container" id="alertsContainer">
+                        <div class="alert-item alert-info">
+                            <span class="alert-icon">ℹ️</span>
+                            <span class="alert-text">System ready</span>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+        </div>
+    </div>
+
+    <script src="mission_control.js"></script>
+</body>
+</html>

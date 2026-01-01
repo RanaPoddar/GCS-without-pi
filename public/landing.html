@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NIDAR Control Center</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #0a0a0a 0%, #1e1e1e 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+            color: #ffffff;
+        }
+
+        .container {
+            max-width: 1200px;
+            width: 100%;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 3rem;
+            animation: fadeInDown 0.6s ease;
+        }
+
+        .logo {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+            animation: float 3s ease-in-out infinite;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-10px); }
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(135deg, #0ea5e9, #22c55e);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .subtitle {
+            font-size: 1.125rem;
+            color: #b0b0b0;
+            font-weight: 400;
+        }
+
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 2rem;
+            margin-bottom: 2rem;
+        }
+
+        .dashboard-card {
+            background: #141414;
+            border: 2px solid #2a2a2a;
+            border-radius: 1rem;
+            padding: 2rem;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            text-decoration: none;
+            color: inherit;
+            display: block;
+            animation: fadeInUp 0.6s ease;
+            animation-fill-mode: both;
+        }
+
+        .dashboard-card:nth-child(1) { animation-delay: 0.1s; }
+        .dashboard-card:nth-child(2) { animation-delay: 0.2s; }
+
+        .dashboard-card:hover {
+            transform: translateY(-5px);
+            border-color: #0ea5e9;
+            box-shadow: 0 10px 40px rgba(14, 165, 233, 0.3);
+        }
+
+        .card-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            display: block;
+        }
+
+        .card-badge {
+            display: inline-block;
+            background: linear-gradient(135deg, #0ea5e9, #22c55e);
+            color: white;
+            font-size: 0.75rem;
+            font-weight: 700;
+            padding: 0.25rem 0.75rem;
+            border-radius: 1rem;
+            margin-bottom: 1rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .card-title {
+            font-size: 1.75rem;
+            font-weight: 700;
+            margin-bottom: 0.75rem;
+            color: #ffffff;
+        }
+
+        .card-description {
+            font-size: 1rem;
+            color: #b0b0b0;
+            line-height: 1.6;
+            margin-bottom: 1.5rem;
+        }
+
+        .card-features {
+            list-style: none;
+            margin-bottom: 1.5rem;
+        }
+
+        .card-features li {
+            font-size: 0.875rem;
+            color: #808080;
+            margin-bottom: 0.5rem;
+            padding-left: 1.5rem;
+            position: relative;
+        }
+
+        .card-features li::before {
+            content: "✓";
+            position: absolute;
+            left: 0;
+            color: #22c55e;
+            font-weight: 700;
+        }
+
+        .card-cta {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: #0ea5e9;
+            font-weight: 600;
+            font-size: 1rem;
+            transition: gap 0.3s ease;
+        }
+
+        .dashboard-card:hover .card-cta {
+            gap: 1rem;
+        }
+
+        .info-section {
+            background: #141414;
+            border: 2px solid #2a2a2a;
+            border-radius: 1rem;
+            padding: 1.5rem;
+            text-align: center;
+            animation: fadeInUp 0.6s ease 0.3s;
+            animation-fill-mode: both;
+        }
+
+        .info-section p {
+            color: #b0b0b0;
+            font-size: 0.875rem;
+            margin-bottom: 1rem;
+        }
+
+        .info-section a {
+            color: #0ea5e9;
+            text-decoration: none;
+            font-weight: 600;
+            transition: color 0.2s ease;
+        }
+
+        .info-section a:hover {
+            color: #38bdf8;
+        }
+
+        @keyframes fadeInDown {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @media (max-width: 768px) {
+            .dashboard-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            h1 {
+                font-size: 2rem;
+            }
+            
+            .card-title {
+                font-size: 1.5rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">🛸</div>
+            <h1>NIDAR Control Center</h1>
+            <p class="subtitle">Advanced Drone Control & Mission Planning System</p>
+        </div>
+
+        <div class="dashboard-grid">
+            <a href="/mission-control" class="dashboard-card">
+                <span class="card-icon">🗺️</span>
+                <span class="card-badge">★ Recommended</span>
+                <h2 class="card-title">Mission Control</h2>
+                <p class="card-description">
+                    Professional mission planning dashboard with real-time dual-drone tracking, 
+                    KML mission uploads, and comprehensive telemetry monitoring.
+                </p>
+                <ul class="card-features">
+                    <li>Interactive map with live drone positions</li>
+                    <li>KML upload & survey grid generation</li>
+                    <li>Real-time telemetry for both drones</li>
+                    <li>Detection tracking & visualization</li>
+                    <li>Modern dark theme interface</li>
+                </ul>
+                <span class="card-cta">
+                    Launch Mission Control
+                    <span>→</span>
+                </span>
+            </a>
+
+            <a href="/flight-test" class="dashboard-card">
+                <span class="card-icon">✈️</span>
+                <span class="card-badge">Flight Testing</span>
+                <h2 class="card-title">Flight Test Dashboard</h2>
+                <p class="card-description">
+                    Simplified dashboard for flight testing with direct Pixhawk control via MAVLink telemetry.
+                    Perfect for quick field tests and manual flight operations.
+                </p>
+                <ul class="card-features">
+                    <li>ARM/DISARM & flight mode control</li>
+                    <li>Takeoff, Land, RTL operations</li>
+                    <li>Waypoint navigation (goto)</li>
+                    <li>Real-time telemetry display</li>
+                    <li>Direct MAVLink commands</li>
+                </ul>
+                <span class="card-cta">
+                    Open Flight Testing
+                    <span>→</span>
+                </span>
+            </a>
+
+            <a href="/legacy" class="dashboard-card">
+                <span class="card-icon">🎛️</span>
+                <h2 class="card-title">Legacy Dashboard</h2>
+                <p class="card-description">
+                    Original control interface with detailed system monitoring, manual flight controls, 
+                    and advanced configuration options.
+                </p>
+                <ul class="card-features">
+                    <li>System statistics & monitoring</li>
+                    <li>Manual flight controls</li>
+                    <li>Direct command interface</li>
+                    <li>Video streaming view</li>
+                    <li>Waypoint management</li>
+                </ul>
+                <span class="card-cta">
+                    Open Legacy Dashboard
+                    <span>→</span>
+                </span>
+            </a>
+        </div>
+
+        <div class="info-section">
+            <p>
+                <strong>Server Status:</strong> 
+                <span id="serverStatus">Starting...</span>
+            </p>
+            <p>
+                Need help? Check the 
+                <a href="https://github.com/your-repo" target="_blank">documentation</a>
+                or view the 
+                <a href="/docs/MISSION_CONTROL_QUICKSTART.md" target="_blank">quick start guide</a>
+            </p>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        // Connect to Socket.IO to check server status
+        const socket = io();
+        const statusEl = document.getElementById('serverStatus');
+
+        socket.on('connect', () => {
+            statusEl.textContent = '🟢 Connected';
+            statusEl.style.color = '#22c55e';
+        });
+
+        socket.on('disconnect', () => {
+            statusEl.textContent = '🔴 Disconnected';
+            statusEl.style.color = '#ef4444';
+        });
+
+        // Check if coming from a specific route
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('auto') === 'mission-control') {
+            window.location.href = '/mission-control';
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+pymavlink>=2.4.41
+Flask>=2.3.0
+flask-cors>=4.0.0
+pyserial>=3.5

@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flight Testing Dashboard - Direct Pixhawk Control</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        h1 {
+            color: #667eea;
+            font-size: 2em;
+            margin-bottom: 5px;
+        }
+
+        .subtitle {
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        .nav-button {
+            display: inline-block;
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 600;
+            transition: all 0.3s;
+            margin-left: 10px;
+        }
+
+        .nav-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .card-header {
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+            margin-bottom: 15px;
+        }
+
+        .card-title {
+            font-size: 1.3em;
+            color: #333;
+            font-weight: 600;
+        }
+
+        .drone-selector {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #667eea;
+            border-radius: 8px;
+            font-size: 16px;
+            margin-bottom: 15px;
+            background: white;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: 600;
+        }
+
+        .status-badge.connected {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .status-badge.disconnected {
+            background: #f44336;
+            color: white;
+        }
+
+        .status-badge.armed {
+            background: #f44336;
+            color: white;
+            animation: blink 1s infinite;
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        button {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin: 5px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+            color: white;
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, #f44336 0%, #e91e63 100%);
+            color: white;
+        }
+
+        .btn-warning {
+            background: linear-gradient(135deg, #ff9800 0%, #ff5722 100%);
+            color: white;
+        }
+
+        button:hover {
+            transform: scale(1.05);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 10px;
+        }
+
+        .telemetry-item {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            border-left: 4px solid #667eea;
+        }
+
+        .telemetry-label {
+            font-size: 0.85em;
+            color: #666;
+            margin-bottom: 5px;
+        }
+
+        .telemetry-value {
+            font-size: 1.8em;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .telemetry-unit {
+            font-size: 0.7em;
+            color: #999;
+        }
+
+        .input-group {
+            margin: 10px 0;
+        }
+
+        .input-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #555;
+        }
+
+        .input-group input {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        .log-container {
+            background: #1a1a1a;
+            color: #0f0;
+            padding: 15px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .log-entry {
+            margin-bottom: 5px;
+            padding: 5px;
+            border-left: 3px solid #667eea;
+            padding-left: 10px;
+        }
+
+        .log-entry.error {
+            border-left-color: #f44336;
+            color: #ff6b6b;
+        }
+
+        .log-entry.success {
+            border-left-color: #4CAF50;
+            color: #4CAF50;
+        }
+
+        .timestamp {
+            color: #888;
+            margin-right: 8px;
+        }
+
+        .waypoint-item {
+            background: #f5f5f5;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            border-left: 4px solid #4CAF50;
+        }
+
+        .waypoint-coords {
+            font-size: 0.85em;
+            color: #555;
+            margin: 4px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div>
+                <h1>✈️ Flight Testing Dashboard</h1>
+                <p class="subtitle">Direct Pixhawk 2.4.8 Control via MAVLink Telemetry</p>
+            </div>
+            <div>
+                <a href="/mission-control" class="nav-button">🗺️ Mission Control</a>
+                <a href="/" class="nav-button">🏠 Home</a>
+            </div>
+        </header>
+
+        <!-- Drone Selection -->
+        <div class="card" style="margin-bottom: 20px;">
+            <div class="card-header">
+                <h2 class="card-title">🎯 Select Drone for Testing</h2>
+            </div>
+            <select class="drone-selector" id="activeDroneSelect">
+                <option value="1">Drone 1</option>
+                <option value="2">Drone 2</option>
+            </select>
+            <div style="display: flex; gap: 15px;">
+                <div style="flex: 1; text-align: center;">
+                    <strong>Drone 1</strong><br>
+                    <span class="status-badge disconnected" id="drone1Status">Disconnected</span>
+                </div>
+                <div style="flex: 1; text-align: center;">
+                    <strong>Drone 2</strong><br>
+                    <span class="status-badge disconnected" id="drone2Status">Disconnected</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid">
+            <!-- Telemetry Card -->
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">📊 Live Telemetry</h2>
+                </div>
+                <div class="telemetry-item">
+                    <div class="telemetry-label">Flight Mode</div>
+                    <div class="telemetry-value" id="flightMode" style="font-size: 1.3em;">UNKNOWN</div>
+                </div>
+                <div class="telemetry-item">
+                    <div class="telemetry-label">Armed Status</div>
+                    <div id="armedStatus">
+                        <span class="status-badge disconnected">DISARMED</span>
+                    </div>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                    <div class="telemetry-item">
+                        <div class="telemetry-label">Altitude</div>
+                        <div class="telemetry-value" id="altitude">0.0<span class="telemetry-unit">m</span></div>
+                    </div>
+                    <div class="telemetry-item">
+                        <div class="telemetry-label">Speed</div>
+                        <div class="telemetry-value" id="groundspeed">0.0<span class="telemetry-unit">m/s</span></div>
+                    </div>
+                    <div class="telemetry-item">
+                        <div class="telemetry-label">Battery</div>
+                        <div class="telemetry-value" id="battery">0<span class="telemetry-unit">%</span></div>
+                    </div>
+                    <div class="telemetry-item">
+                        <div class="telemetry-label">Battery Voltage</div>
+                        <div class="telemetry-value" id="batteryVoltage">0.0<span class="telemetry-unit">V</span></div>
+                    </div>
+                    <div class="telemetry-item">
+                        <div class="telemetry-label">Satellites</div>
+                        <div class="telemetry-value" id="satellites">0</div>
+                    </div>
+                </div>
+                <div class="telemetry-item">
+                    <div class="telemetry-label">GPS Position</div>
+                    <div style="font-size: 0.9em;">
+                        Lat: <span id="gpsLat">0.000000</span><br>
+                        Lon: <span id="gpsLon">0.000000</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Basic Flight Controls -->
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">🎮 Basic Controls</h2>
+                </div>
+                <div class="controls">
+                    <button class="btn-success" onclick="armDrone()">ARM</button>
+                    <button class="btn-warning" onclick="disarmDrone()">DISARM</button>
+                    <button class="btn-primary" onclick="takeoffDrone()">TAKEOFF</button>
+                    <button class="btn-danger" onclick="landDrone()">LAND</button>
+                    <button class="btn-warning" onclick="returnToLaunch()">RTL</button>
+                </div>
+            </div>
+
+            <!-- Flight Modes -->
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">🔧 Flight Modes</h2>
+                </div>
+                <div class="controls">
+                    <button class="btn-primary" onclick="setFlightMode('STABILIZE')">STABILIZE</button>
+                    <button class="btn-primary" onclick="setFlightMode('ALT_HOLD')">ALT HOLD</button>
+                    <button class="btn-primary" onclick="setFlightMode('LOITER')">LOITER</button>
+                    <button class="btn-primary" onclick="setFlightMode('GUIDED')">GUIDED</button>
+                    <button class="btn-primary" onclick="setFlightMode('AUTO')">AUTO</button>
+                    <button class="btn-primary" onclick="setFlightMode('RTL')">RTL</button>
+                </div>
+            </div>
+
+            <!-- Goto Waypoint -->
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">📍 Goto Waypoint</h2>
+                </div>
+                <div class="input-group">
+                    <label>Latitude:</label>
+                    <input type="number" step="0.000001" id="gotoLat" placeholder="12.345678">
+                </div>
+                <div class="input-group">
+                    <label>Longitude:</label>
+                    <input type="number" step="0.000001" id="gotoLon" placeholder="77.654321">
+                </div>
+                <div class="input-group">
+                    <label>Altitude (m):</label>
+                    <input type="number" id="gotoAlt" value="10" min="1">
+                </div>
+                <button class="btn-success" onclick="gotoLocation()" style="width: 100%; margin-top: 10px;">
+                    ➜ Navigate to Waypoint
+                </button>
+                <button class="btn-primary" onclick="useCurrentGPS()" style="width: 100%; margin-top: 5px;">
+                    📍 Use Current GPS
+                </button>
+            </div>
+
+            <!-- Takeoff Configuration -->
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">🚁 Takeoff Settings</h2>
+                </div>
+                <div class="input-group">
+                    <label>Takeoff Altitude (m):</label>
+                    <input type="number" id="takeoffAlt" value="5" min="1" max="50">
+                </div>
+                <button class="btn-success" onclick="takeoffDrone()" style="width: 100%;">
+                    ⬆️ Execute Takeoff
+                </button>
+            </div>
+
+            <!-- Activity Log -->
+            <div class="card" style="grid-column: span 2;">
+                <div class="card-header">
+                    <h2 class="card-title">📝 Activity Log</h2>
+                </div>
+                <button class="btn-warning" onclick="clearLog()">🗑️ Clear Log</button>
+                <div class="log-container" id="activityLog">
+                    <div class="log-entry">
+                        <span class="timestamp">[--:--:--]</span>Flight testing dashboard initialized
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        let activeDrone = 1;
+        let telemetryData = {};
+        let currentTelemetry = {};  // Store telemetry by drone ID
+
+        // Debug function to log telemetry status
+        window.debugTelemetry = function() {
+            console.log('=== TELEMETRY DEBUG ===');
+            console.log('Current Telemetry:', currentTelemetry);
+            console.log('Active Drone:', getActiveDrone());
+            const droneId = getActiveDrone();
+            if (currentTelemetry[droneId]) {
+                const t = currentTelemetry[droneId];
+                console.log('Altitude:', t.altitude);
+                console.log('Groundspeed:', t.groundspeed);
+                console.log('Battery:', t.battery);
+                console.log('GPS Satellites:', t.gps?.satellites_visible);
+            } else {
+                console.log('No telemetry data for drone', droneId);
+            }
+        }
+
+        // Get active drone ID
+        function getActiveDrone() {
+            return parseInt(document.getElementById('activeDroneSelect').value);
+        }
+
+        // Update active drone selection
+        document.getElementById('activeDroneSelect').addEventListener('change', () => {
+            activeDrone = getActiveDrone();
+            addLog(`Switched to Drone ${activeDrone}`, 'info');
+        });
+
+        // Add log entry
+        function addLog(message, type = 'info') {
+            const log = document.getElementById('activityLog');
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            
+            const timestamp = new Date().toLocaleTimeString();
+            entry.innerHTML = `<span class="timestamp">[${timestamp}]</span>${message}`;
+            
+            log.insertBefore(entry, log.firstChild);
+            
+            while (log.children.length > 50) {
+                log.removeChild(log.lastChild);
+            }
+        }
+
+        function clearLog() {
+            document.getElementById('activityLog').innerHTML = '';
+            addLog('Log cleared', 'info');
+        }
+
+        // Socket handlers
+        socket.on('connect', () => {
+            addLog('Connected to Ground Control Station', 'success');
+        });
+
+        socket.on('disconnect', () => {
+            addLog('Disconnected from server', 'error');
+        });
+
+        socket.on('drone_connected', (data) => {
+            document.getElementById(`drone${data.drone_id}Status`).textContent = 'Connected';
+            document.getElementById(`drone${data.drone_id}Status`).className = 'status-badge connected';
+            addLog(`Drone ${data.drone_id} connected`, 'success');
+        });
+
+        socket.on('drone_disconnected', (data) => {
+            document.getElementById(`drone${data.drone_id}Status`).textContent = 'Disconnected';
+            document.getElementById(`drone${data.drone_id}Status`).className = 'status-badge disconnected';
+            addLog(`Drone ${data.drone_id} disconnected`, 'error');
+        });
+
+        socket.on('drone_telemetry_update', (data) => {
+            // Update connection status when telemetry is received
+            const statusEl = document.getElementById(`drone${data.drone_id}Status`);
+            if (statusEl.textContent !== 'Connected') {
+                statusEl.textContent = 'Connected';
+                statusEl.className = 'status-badge connected';
+            }
+            
+            // Store telemetry for this drone
+            currentTelemetry[data.drone_id] = data.telemetry;
+            
+            if (data.drone_id !== getActiveDrone()) return;
+            
+            const telem = data.telemetry;
+            telemetryData = telem;
+            
+            // Update display with proper null checks
+            document.getElementById('flightMode').textContent = telem.flight_mode || 'UNKNOWN';
+            
+            const altitude = telem.altitude || telem.relative_altitude || 0;
+            document.getElementById('altitude').innerHTML = `${altitude.toFixed(1)}<span class="telemetry-unit">m</span>`;
+            
+            const groundspeed = telem.groundspeed || 0;
+            document.getElementById('groundspeed').innerHTML = `${groundspeed.toFixed(1)}<span class="telemetry-unit">m/s</span>`;
+            
+            const batteryPercent = telem.battery?.remaining || 0;
+            document.getElementById('battery').innerHTML = `${batteryPercent}<span class="telemetry-unit">%</span>`;
+            
+            const batteryVoltage = telem.battery?.voltage || 0;
+            document.getElementById('batteryVoltage').innerHTML = `${batteryVoltage.toFixed(2)}<span class="telemetry-unit">V</span>`;
+            
+            const satellites = telem.gps?.satellites_visible || 0;
+            document.getElementById('satellites').textContent = satellites;
+            
+            document.getElementById('gpsLat').textContent = (telem.gps?.lat || 0).toFixed(6);
+            document.getElementById('gpsLon').textContent = (telem.gps?.lon || 0).toFixed(6);
+            
+            const armedBadge = document.getElementById('armedStatus');
+            if (telem.armed) {
+                armedBadge.innerHTML = '<span class="status-badge armed">ARMED</span>';
+            } else {
+                armedBadge.innerHTML = '<span class="status-badge disconnected">DISARMED</span>';
+            }
+        });
+
+        socket.on('drone_command_result', (data) => {
+            const type = data.success ? 'success' : 'error';
+            const message = data.error || `${data.command} executed`;
+            addLog(`Drone ${data.drone_id}: ${message}`, type);
+        });
+
+        // Flight control functions
+        function armDrone() {
+            const droneId = getActiveDrone();
+            const currentStatus = currentTelemetry[droneId];
+            
+            if (!currentStatus) {
+                addLog('No telemetry data available', 'error');
+                return;
+            }
+            
+            if (currentStatus.armed) {
+                addLog(`Drone ${droneId} is already ARMED`, 'warning');
+                return;
+            }
+            
+            // Check GPS
+            if (currentStatus.gps && currentStatus.gps.fix_type < 3) {
+                addLog('⚠️ WARNING: GPS fix type is ' + currentStatus.gps.fix_type + ' (weak). Still attempting to arm...', 'warning');
+            }
+            
+            socket.emit('drone_arm', { drone_id: droneId });
+            addLog(`Sending ARM command to Drone ${droneId}...`, 'info');
+        }
+
+        function disarmDrone() {
+            if (confirm('Are you sure you want to disarm the drone?')) {
+                socket.emit('drone_disarm', { drone_id: getActiveDrone() });
+                addLog(`Sending DISARM command to Drone ${getActiveDrone()}`, 'info');
+            }
+        }
+
+        function setFlightMode(mode) {
+            socket.emit('drone_set_mode', { 
+                drone_id: getActiveDrone(),
+                mode: mode 
+            });
+            addLog(`Setting flight mode to ${mode} for Drone ${getActiveDrone()}`, 'info');
+        }
+
+        function takeoffDrone() {
+            const altitude = parseInt(document.getElementById('takeoffAlt').value);
+            if (altitude < 1 || altitude > 50) {
+                addLog('Takeoff altitude must be between 1-50 meters', 'error');
+                return;
+            }
+            
+            // Pre-flight checks
+            const droneId = getActiveDrone();
+            const currentDroneStatus = currentTelemetry[droneId];
+            
+            if (!currentDroneStatus) {
+                addLog('No telemetry data available', 'error');
+                return;
+            }
+            
+            // Check if armed
+            if (!currentDroneStatus.armed) {
+                addLog('ERROR: Drone is NOT armed! Arm drone before takeoff.', 'error');
+                return;
+            }
+            
+            // Check GPS fix
+            if (currentDroneStatus.gps && currentDroneStatus.gps.fix_type < 3) {
+                addLog('⚠️ WARNING: GPS fix poor. Continuing anyway... (fix_type: ' + currentDroneStatus.gps.fix_type + ')', 'warning');
+            }
+            
+            // Check battery
+            if (currentDroneStatus.battery && currentDroneStatus.battery.remaining < 20) {
+                addLog('ERROR: Battery too low (<20%)! Cannot takeoff.', 'error');
+                return;
+            }
+            
+            if (confirm(`Takeoff to ${altitude}m altitude?\n\nArmed: YES\nMode will be set to GUIDED`)) {
+                addLog(`Pre-flight checks PASSED. Setting mode to GUIDED...`, 'info');
+                
+                // First ensure GUIDED mode
+                socket.emit('drone_set_mode', { 
+                    drone_id: droneId,
+                    mode: 'GUIDED' 
+                });
+                
+                // Wait 1 second then send takeoff
+                setTimeout(() => {
+                    socket.emit('drone_takeoff', { 
+                        drone_id: droneId,
+                        altitude: altitude 
+                    });
+                    addLog(`Sending TAKEOFF command (${altitude}m) to Drone ${droneId}`, 'info');
+                }, 1000);
+            }
+        }
+
+        function landDrone() {
+            if (confirm('Initiate landing sequence?')) {
+                socket.emit('drone_land', { drone_id: getActiveDrone() });
+                addLog(`Sending LAND command to Drone ${getActiveDrone()}`, 'info');
+            }
+        }
+
+        function returnToLaunch() {
+            if (confirm('Return to launch point?')) {
+                socket.emit('drone_rtl', { drone_id: getActiveDrone() });
+                addLog(`Sending RTL command to Drone ${getActiveDrone()}`, 'info');
+            }
+        }
+
+        function gotoLocation() {
+            const lat = parseFloat(document.getElementById('gotoLat').value);
+            const lon = parseFloat(document.getElementById('gotoLon').value);
+            const alt = parseInt(document.getElementById('gotoAlt').value);
+            
+            if (isNaN(lat) || isNaN(lon) || isNaN(alt)) {
+                addLog('Please enter valid coordinates', 'error');
+                return;
+            }
+            
+            if (confirm(`Navigate to (${lat.toFixed(6)}, ${lon.toFixed(6)}) at ${alt}m?`)) {
+                socket.emit('drone_goto', {
+                    drone_id: getActiveDrone(),
+                    latitude: lat,
+                    longitude: lon,
+                    altitude: alt
+                });
+                addLog(`Navigating Drone ${getActiveDrone()} to waypoint`, 'info');
+            }
+        }
+
+        function useCurrentGPS() {
+            if (telemetryData.gps) {
+                document.getElementById('gotoLat').value = telemetryData.gps.lat.toFixed(6);
+                document.getElementById('gotoLon').value = telemetryData.gps.lon.toFixed(6);
+                addLog('Using current GPS coordinates', 'success');
+            } else {
+                addLog('No GPS data available', 'error');
+            }
+        }
+    </script>
+</body>
+</html>

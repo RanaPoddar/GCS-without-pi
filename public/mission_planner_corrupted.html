@@ -1,0 +1,805 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KML Mission Planner - NIdar</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            min-height: 100vh;
+            color: #fff;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            padding: 20px;
+            border-radius: 15px;
+            margin-bottom: 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+        }
+
+        h1 {
+            font-size: 2.2em;
+            margin-bottom: 10px;
+            color: #fff;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .subtitle {
+            font-size: 1.1em;
+            opacity: 0.9;
+            margin-bottom: 5px;
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 400px 1fr;
+            gap: 20px;
+            height: calc(100vh - 180px);
+        }
+
+        .control-panel {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 25px;
+            border-radius: 15px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+            color: #333;
+            overflow-y: auto;
+        }
+
+        .map-container {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            overflow: hidden;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+            position: relative;
+        }
+
+        #map {
+            height: 100%;
+            width: 100%;
+        }
+
+        .section {
+            margin-bottom: 25px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+
+        .section:last-child {
+            border-bottom: none;
+        }
+
+        .section-title {
+            font-size: 1.3em;
+            color: #1e3c72;
+            margin-bottom: 15px;
+            font-weight: 600;
+        }
+
+        .upload-area {
+            border: 3px dashed #1e3c72;
+            border-radius: 10px;
+            padding: 30px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            background: #f5f8fc;
+        }
+
+        .upload-area:hover {
+            border-color: #2a5298;
+            background: #e8f0fe;
+        }
+
+        .upload-area.dragover {
+            background: #d0e4ff;
+            border-color: #0d47a1;
+        }
+
+        .file-input {
+            display: none;
+        }
+
+        .upload-icon {
+            font-size: 3em;
+            margin-bottom: 10px;
+            color: #1e3c72;
+        }
+
+        .param-group {
+            margin-bottom: 15px;
+        }
+
+        .param-label {
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #333;
+            display: block;
+        }
+
+        .param-input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 1em;
+            transition: border-color 0.3s;
+        }
+
+        .param-input:focus {
+            outline: none;
+            border-color: #1e3c72;
+        }
+
+        .btn {
+            width: 100%;
+            padding: 15px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-top: 10px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: white;
+            box-shadow: 0 4px 15px rgba(30, 60, 114, 0.3);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(30, 60, 114, 0.4);
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+            color: white;
+            box-shadow: 0 4px 15px rgba(76, 175, 80, 0.3);
+        }
+
+        .btn-success:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(76, 175, 80, 0.4);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+
+        .mission-info {
+            background: #f5f8fc;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .info-row:last-child {
+            border-bottom: none;
+        }
+
+        .info-label {
+            font-weight: 600;
+            color: #555;
+        }
+
+        .info-value {
+            color: #1e3c72;
+            font-weight: 600;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 0.9em;
+            font-weight: 600;
+            margin-top: 10px;
+        }
+
+        .status-pending {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .status-ready {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-uploading {
+            background: #d1ecf1;
+            color: #0c5460;
+        }
+
+        .status-error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .pi-status {
+            background: #e8f0fe;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+        }
+
+        .pi-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .pi-indicator.connected {
+            background: #4CAF50;
+            animation: pulse 2s infinite;
+        }
+
+        .pi-indicator.disconnected {
+            background: #f44336;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #1e3c72;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #1e3c72;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .waypoint-list {
+            max-height: 200px;
+            overflow-y: auto;
+            background: white;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 10px;
+            margin-top: 10px;
+        }
+
+        .waypoint-item {
+            padding: 6px;
+            font-size: 0.9em;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .waypoint-item:last-child {
+            border-bottom: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🛰️ KML Mission Planner</h1>
+            <div class="subtitle">Upload KML boundary → Auto-generate survey → One-click start</div>
+        </header>
+
+        <div class="main-content">
+            <!-- Control Panel -->
+            <div class="control-panel">
+                <!-- Pi Connection Status -->
+                <div class="section">
+                    <div class="section-title">🔌 Connection Status</div>
+                    <div class="pi-status">
+                        <span class="pi-indicator" id="piIndicator"></span>
+                        <span id="piStatus">Connecting...</span>
+                    </div>
+                </div>
+
+                <!-- KML Upload -->
+                <div class="section">
+                    <div class="section-title">📁 Upload KML Boundary</div>
+                    <div class="upload-area" id="uploadArea">
+                        <div class="upload-icon">📤</div>
+                        <div><strong>Click or drag KML file here</strong></div>
+                        <div style="margin-top: 10px; opacity: 0.7; font-size: 0.9em;">Competition boundary file (.kml)</div>
+                        <input type="file" id="fileInput" class="file-input" accept=".kml" />
+                    </div>
+                    <div id="fileName" style="margin-top: 10px; color: #4CAF50; font-weight: 600;"></div>
+                </div>
+
+                <!-- Mission Parameters -->
+                <div class="section" id="paramsSection" style="display: none;">
+                    <div class="section-title">⚙️ Flight Parameters</div>
+                    <div class="param-group">
+                        <label class="param-label">Altitude (meters)</label>
+                        <input type="number" id="altitude" class="param-input" value="15" step="1" min="10" max="50" />
+                    </div>
+                    <div class="param-group">
+                        <label class="param-label">Speed (m/s)</label>
+                        <input type="number" id="speed" class="param-input" value="2.0" step="0.1" min="0.5" max="5.0" />
+                    </div>
+                    <button class="btn btn-primary" id="generateBtn" onclick="generateMission()">
+                        🔄 Generate Mission
+                    </button>
+                </div>
+
+                <!-- Mission Preview -->
+                <div class="section" id="previewSection" style="display: none;">
+                    <div class="section-title">📊 Mission Preview</div>
+                    <div class="mission-info" id="missionInfo"></div>
+                    <div class="status-badge" id="missionStatus"></div>
+                </div>
+
+                <!-- Start Mission -->
+                <div class="section" id="startSection" style="display: none;">
+                    <button class="btn btn-success" id="startBtn" onclick="startMission()">
+                        � AUTONOMOUS LAUNCH
+                    </button>
+                    <div style="margin-top: 15px; padding: 12px; background: #e8f5e9; border-radius: 8px; font-size: 0.9em; border-left: 4px solid #4CAF50;">
+                        <strong>✅ NIdar Competition Compliance:</strong>
+                        <ul style="margin-top: 8px; margin-left: 20px;">
+                            <li>Mission uploaded to Pixhawk</li>
+                            <li>Drone auto-arms and launches</li>
+                            <li>Flies autonomously (AUTO mode)</li>
+                            <li>Detects crops during flight</li>
+                            <li>Returns automatically when complete</li>
+                        </ul>
+                        <div style="margin-top: 8px; font-size: 0.85em; opacity: 0.8;">
+                            ⚠️ No manual intervention after launch (per rule 7.26)
+                        </div>
+                    </div>
+                    <div style="margin-top: 15px; padding: 12px; background: #fff3cd; border-radius: 8px; font-size: 0.9em;">
+                        <strong>⚠️ Pre-Launch Check:</strong>
+                        <ul style="margin-top: 8px; margin-left: 20px;">
+                            <li>Drone battery > 50%</li>
+                            <li>GPS lock acquired (>8 satellites)</li>
+                            <li>Propellers secured</li>
+                            <li>Area clear for flight</li>
+                            <li>Detection system ready</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Map -->
+            <div class="map-container">
+                <div id="map"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Initialize map
+        const map = L.map('map').setView([28.5235, 77.1235], 13);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        let currentMissionId = null;
+        let uploadedFile = null;
+        let missionMarkers = [];
+        let missionPolyline = null;
+        let socket = null;
+        let piConnected = false;
+        let boundaryPolygon = null;
+
+        // Helper: Point-in-polygon test (ray-casting algorithm)
+        function pointInPolygon(point, polygon) {
+            let x = point[1], y = point[0];
+            let inside = false;
+            for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+                let xi = polygon[i][1], yi = polygon[i][0];
+                let xj = polygon[j][1], yj = polygon[j][0];
+                let intersect = ((yi > y) !== (yj > y)) &&
+                    (x < (xj - xi) * (y - yi) / (yj - yi + 1e-12) + xi);
+                if (intersect) inside = !inside;
+            }
+            return inside;
+        }
+
+        // Initialize Socket.IO
+        function initSocket() {
+            socket = io();
+
+            socket.on('connect', () => {
+                console.log('Connected to server');
+            });
+
+            socket.on('pi_connected', (data) => {
+                console.log('Pi connected:', data.pi_id);
+                updatePiStatus(true);
+            });
+
+            socket.on('pi_disconnected', (data) => {
+                console.log('Pi disconnected:', data.pi_id);
+                updatePiStatus(false);
+            });
+
+            socket.on('mission_upload_status', (data) => {
+                console.log('Mission upload status:', data);
+                if (data.success) {
+                    showStatus('✅ Mission uploaded! Autonomous launch sequence initiated...', 'ready');
+                    document.getElementById('startBtn').textContent = '🚁 AUTONOMOUS FLIGHT IN PROGRESS';
+                } else {
+                    showStatus('Mission upload failed: ' + data.error, 'error');
+                    const startBtn = document.getElementById('startBtn');
+                    startBtn.disabled = false;
+                    startBtn.textContent = '🚀 AUTONOMOUS LAUNCH';
+                }
+            });
+
+            socket.on('autonomous_launch_status', (data) => {
+                console.log('Launch status:', data);
+                const startBtn = document.getElementById('startBtn');
+                
+                if (data.stage === 'arming') {
+                    showStatus('🔐 Arming drone...', 'uploading');
+                    startBtn.textContent = '🔐 Arming...';
+                } else if (data.stage === 'armed') {
+                    showStatus('✅ Armed. Setting AUTO mode...', 'uploading');
+                    startBtn.textContent = '✈️ Launching...';
+                } else if (data.stage === 'auto_mode') {
+                    showStatus('🚁 AUTO mode activated. Mission starting...', 'uploading');
+                    startBtn.textContent = '🚁 FLYING AUTONOMOUSLY';
+                } else if (data.stage === 'flying') {
+                    showStatus('✅ Autonomous flight in progress!', 'ready');
+                    startBtn.textContent = '🚁 MISSION IN PROGRESS';
+                } else if (data.error) {
+                    showStatus('Launch error: ' + data.error, 'error');
+                    startBtn.disabled = false;
+                    startBtn.textContent = '🚀 AUTONOMOUS LAUNCH';
+                }
+            });
+
+            // Request initial Pi list
+            setTimeout(() => {
+                fetch('/api/pis')
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.pis && data.pis.length > 0) {
+                            updatePiStatus(true);
+                        }
+                    });
+            }, 1000);
+        }
+
+        function updatePiStatus(connected) {
+            piConnected = connected;
+            const indicator = document.getElementById('piIndicator');
+            const status = document.getElementById('piStatus');
+            const startBtn = document.getElementById('startBtn');
+            
+            if (connected) {
+                indicator.className = 'pi-indicator connected';
+                status.textContent = 'Pi Connected (pi_001)';
+                if (currentMissionId && startBtn) {
+                    startBtn.disabled = false;
+                    startBtn.textContent = '🚁 START MISSION';
+                }
+            } else {
+                indicator.className = 'pi-indicator disconnected';
+                status.textContent = 'Pi Disconnected (Testing Mode)';
+                if (startBtn) {
+                    startBtn.disabled = true;
+                    if (currentMissionId) {
+                        startBtn.textContent = '⚠️ Pi Not Connected';
+                    }
+                }
+            }
+        }
+
+        // File upload handling
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+
+        uploadArea.addEventListener('click', () => fileInput.click());
+
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleFile(files[0]);
+            }
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFile(e.target.files[0]);
+            }
+        });
+
+        function handleFile(file) {
+            if (!file.name.endsWith('.kml')) {
+                alert('Please upload a KML file');
+                return;
+            }
+
+            uploadedFile = file;
+            document.getElementById('fileName').textContent = `📄 ${file.name}`;
+            document.getElementById('paramsSection').style.display = 'block';
+            
+            // Clear previous mission
+            clearMap();
+            boundaryPolygon = null;
+            document.getElementById('previewSection').style.display = 'none';
+            document.getElementById('startSection').style.display = 'none';
+
+            // Parse KML to extract boundary polygon for clipping
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const text = e.target.result;
+                const coordsMatch = text.match(/<coordinates>([\s\S]*?)<\/coordinates>/);
+                if (coordsMatch) {
+                    const coordsText = coordsMatch[1].trim();
+                    const coordsArr = coordsText.split(/\s+/).filter(s => s.length > 0).map(line => {
+                        const parts = line.split(',');
+                        if (parts.length >= 2) {
+                            return [parseFloat(parts[1]), parseFloat(parts[0])]; // [lat, lon]
+                        }
+                        return null;
+                    }).filter(p => p !== null && !isNaN(p[0]) && !isNaN(p[1]));
+                    
+                    if (coordsArr.length > 2) {
+                        boundaryPolygon = coordsArr;
+                        console.log('Boundary polygon loaded with', coordsArr.length, 'points');
+                    }
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        async function generateMission() {
+            if (!uploadedFile) {
+                alert('Please upload a KML file first');
+                return;
+            }
+
+            // Allow mission generation even without Pi (for testing)
+            if (!piConnected) {
+                console.warn('Pi not connected - mission will be generated but cannot be uploaded');
+            }
+
+            const generateBtn = document.getElementById('generateBtn');
+            generateBtn.disabled = true;
+            generateBtn.innerHTML = '<div class="spinner" style="width: 20px; height: 20px; margin: 0 auto;"></div>';
+
+            const formData = new FormData();
+            formData.append('kml', uploadedFile);
+            formData.append('altitude', document.getElementById('altitude').value);
+            formData.append('speed', document.getElementById('speed').value);
+            formData.append('pi_id', 'pi_001');
+
+            try {
+                const response = await fetch('/api/mission/upload_kml', {
+                    method: 'POST',
+                    body: formData
+                generateBtn.disabled = false;
+                generateBtn.innerHTML = '🔄 Generate Mission';
+            }
+        }
+
+        function displayMissionPreview(mission) {
+            const infoDiv = document.getElementById('missionInfo');
+            const field = mission.field_info || {};
+            const survey = mission.survey_info || {};
+            const stats = mission.mission_stats || {};
+
+            infoDiv.innerHTML = `
+                <div class="info-row">
+                    <span class="info-label">Field Size:</span>
+                    <span class="info-value">${field.width_m || 0}m × ${field.length_m || 0}m (${(field.area_acres || 0).toFixed(2)} acres)</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Waypoints:</span>
+                    <span class="info-value">${mission.waypoints_count || 0}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Survey Passes:</span>
+                    <span class="info-value">${survey.total_passes || 0}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Pattern:</span>
+                    <span class="info-value">${survey.pattern || 'Unknown'} - ${survey.direction || 'N/A'}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Flight Time:</span>
+                    <span class="info-value">${(stats.estimated_time_minutes || 0).toFixed(1)} minutes</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Distance:</span>
+                    <span class="info-value">${(stats.total_distance_m || 0).toFixed(0)}m</span>
+                </div>
+            `;
+
+            document.getElementById('previewSection').style.display = 'block';
+
+            // Display waypoints on map
+            if (mission.waypoints && mission.waypoints.length > 0) {
+                displayWaypoints(mission.waypoints);
+            }
+        }
+
+        function displayWaypoints(waypoints) {
+            if (!waypoints || waypoints.length === 0) {
+                console.warn('No waypoints to display');
+                return;
+            }
+            
+            clearMap();
+
+            // Filter waypoints to only those inside the boundary polygon
+            let filteredWaypoints = waypoints;
+            if (boundaryPolygon && Array.isArray(boundaryPolygon) && boundaryPolygon.length > 2) {
+                console.log('Filtering waypoints against boundary polygon...');
+                filteredWaypoints = waypoints.filter(wp => pointInPolygon([wp.lat, wp.lon], boundaryPolygon));
+                console.log(`Filtered: ${waypoints.length} -> ${filteredWaypoints.length} waypoints`);
+                
+                if (filteredWaypoints.length === 0) {
+                    console.warn('All waypoints filtered out - using original waypoints');
+                    filteredWaypoints = waypoints;
+                }
+            } else {
+                console.warn('No boundary polygon available - showing all waypoints');
+            }
+
+            const points = filteredWaypoints.map(wp => [wp.lat, wp.lon]);
+
+            // Draw path
+            missionPolyline = L.polyline(points, {
+                color: '#1e3c72',
+                weight: 3,
+                opacity: 0.7
+            }).addTo(map);
+
+            // Add waypoint markers
+            filteredWaypoints.forEach((wp, i) => {
+                const color = i === 0 ? 'green' : (i === filteredWaypoints.length - 1 ? 'red' : 'blue');
+                const marker = L.circleMarker([wp.lat, wp.lon], {
+                    radius: i === 0 || i === filteredW=> {
+                const color = i === 0 ? 'green' : (i === filteredWaypoints.length - 1 ? 'red' : 'blue');
+                const marker = L.circleMarker([wp.lat, wp.lon], {
+                    radius: i === 0 || i === filteredWryPolygon = null;
+                                    }
+                                } else {
+                                    boundaryPolygon = null;
+                                }
+                            };
+                            reader.readAsText(file);
+                        }
+            const points = waypoints.map(wp => [wp.lat, wp.lon]);
+
+            // Draw path
+            missionPolyline = L.polyline(points, {
+                color: '#1e3c72',
+                weight: 3,
+                opacity: 0.7
+            }).addTo(map);
+
+            // Add waypoint markers
+            waypoints.forEach((wp, i) => {
+                const color = i === 0 ? 'green' : (i === waypoints.length - 1 ? 'red' : 'blue');
+                const marker = L.circleMarker([wp.lat, wp.lon], {
+                    radius: i === 0 || i === waypoints.length - 1 ? 8 : 5,
+                    color: color,
+                    fillColor: color,
+                    fillOpacity: 0.8
+                }).addTo(map);
+
+                marker.bindPopup(`WP ${wp.seq}: ${wp.alt}m`);
+                missionMarkers.push(marker);
+            });
+
+            // Fit map to bounds
+            map.fitBounds(missionPolyline.getBounds(), { padding: [50, 50] });
+        }
+
+        function clearMap() {
+            missionMarkers.forEach(marker => map.removeLayer(marker));
+            missionMarkers = [];
+            if (missionPolyline) {
+                map.removeLayer(missionPolyline);
+                missionPolyline = null;
+            }
+        }
+
+        function showStatus(message, type) {
+            const statusDiv = document.getElementById('missionStatus');
+            statusDiv.textContent = message;
+            statusDiv.className = `status-badge status-${type}`;
+        }
+
+        async function startMission() {
+            if (!currentMissionId) {
+                alert('No mission generated');
+                return;
+            }
+
+            if (!confirm('🚀 AUTONOMOUS LAUNCH\n\nThis will:\n1. Upload mission to Pixhawk\n2. ARM drone automatically\n3. Launch in AUTO mode\n4. Fly autonomously\n5. Return when complete\n\nPer NIdar rules, NO manual intervention allowed after launch.\n\nProceed?')) {
+                return;
+            }
+
+            const startBtn = document.getElementById('startBtn');
+            startBtn.disabled = true;
+            startBtn.textContent = '⏳ Uploading mission to Pixhawk...';
+
+            try {
+                const response = await fetch(`/api/mission/${currentMissionId}/start`, {
+                    method: 'POST'
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showStatus('Mission uploading to Pixhawk...', 'uploading');
+                    startBtn.textContent = '📡 Waiting for autonomous launch...';
+                } else {
+                    alert('Failed to start mission: ' + (data.error || 'Unknown error'));
+                    startBtn.disabled = false;
+                    startBtn.textContent = '🚁 START MISSION';
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+                startBtn.disabled = false;
+                startBtn.textContent = '🚁 START MISSION';
+            }
+        }
+
+        // Initialize on page load
+        window.onload = () => {
+            initSocket();
+        };
+    </script>
+</body>
+</html>

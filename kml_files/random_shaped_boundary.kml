@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Random Polygon Field - 2 Acres</name>
+    <description>Irregular polygon field boundary for NIdar competition testing</description>
+    <Style id="fieldStyle">
+      <LineStyle>
+        <color>ff0000ff</color>
+        <width>3</width>
+      </LineStyle>
+      <PolyStyle>
+        <color>4d00ff00</color>
+      </PolyStyle>
+    </Style>
+    <Placemark>
+      <name>Survey Area</name>
+      <description>Irregular polygon field (~2 acres / 8,094 sq m)</description>
+      <styleUrl>#fieldStyle</styleUrl>
+      <Polygon>
+        <outerBoundaryIs>
+          <LinearRing>
+            <coordinates>
+              77.1234567,28.5234567,0
+              77.1248320,28.5235840,0
+              77.1254180,28.5238920,0
+              77.1256430,28.5243150,0
+              77.1253670,28.5247280,0
+              77.1247210,28.5249650,0
+              77.1239840,28.5248920,0
+              77.1235120,28.5245330,0
+              77.1232890,28.5240180,0
+              77.1233450,28.5236470,0
+              77.1234567,28.5234567,0
+            </coordinates>
+          </LinearRing>
+        </outerBoundaryIs>
+      </Polygon>
+    </Placemark>
+  </Document>
+</kml>

@@ -1,0 +1,2393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flight Testing Dashboard - Direct Pixhawk Control</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+        }
+
+        h1 {
+            color: #667eea;
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+
+        .drone-selector {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #667eea;
+            border-radius: 5px;
+            font-size: 16px;
+            margin-bottom: 15px;
+            background: white;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+            animation: pulse 2s infinite;
+        }
+
+        .status-indicator.connected {
+            background: #4CAF50;
+        }
+
+        .status-indicator.disconnected {
+            background: #f44336;
+            animation: none;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            transition: transform 0.3s;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+        }
+
+        .card-header {
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+            margin-bottom: 15px;
+        }
+
+        .card-title {
+            font-size: 1.3em;
+            color: #333;
+            font-weight: 600;
+        }
+
+        .nav-button {
+            display: inline-block;
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 1em;
+            margin-left: 15px;
+            transition: all 0.3s;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+        }
+
+        .nav-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .nav-button:active {
+            transform: translateY(0);
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header-left {
+            flex: 1;
+        }
+
+        .header-right {
+            display: flex;
+            gap: 10px;
+        }
+
+        .pi-selector {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #667eea;
+            border-radius: 5px;
+            font-size: 16px;
+            margin-bottom: 15px;
+            display: none; /* Hidden - not used */
+        }
+
+        .video-container {
+            position: relative;
+            width: 100%;
+            background: #000;
+            border-radius: 8px;
+            overflow: hidden;
+            min-height: 300px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #videoFeed {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        .video-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 1.2em;
+            background: rgba(0, 0, 0, 0.7);
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+        }
+
+        .stat-item {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+
+        .stat-label {
+            font-size: 0.9em;
+            color: #666;
+            margin-bottom: 5px;
+        }
+
+        .stat-value {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .stat-unit {
+            font-size: 0.8em;
+            color: #999;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e0e0e0;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 8px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            transition: width 0.3s;
+        }
+
+        .progress-fill.high {
+            background: linear-gradient(90deg, #f44336, #e91e63);
+        }
+
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        button {
+            flex: 1;
+            min-width: 120px;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: scale(1.05);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+            color: white;
+        }
+
+        .btn-success:hover {
+            transform: scale(1.05);
+            box-shadow: 0 4px 12px rgba(76, 175, 80, 0.4);
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, #f44336 0%, #e91e63 100%);
+            color: white;
+        }
+
+        .btn-danger:hover {
+            transform: scale(1.05);
+            box-shadow: 0 4px 12px rgba(244, 67, 54, 0.4);
+        }
+
+        .btn-warning {
+            background: linear-gradient(135deg, #ff9800 0%, #ff5722 100%);
+            color: white;
+        }
+
+        .btn-warning:hover {
+            transform: scale(1.05);
+            box-shadow: 0 4px 12px rgba(255, 152, 0, 0.4);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+
+        .log-container {
+            background: #1a1a1a;
+            color: #0f0;
+            padding: 15px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .log-entry {
+            margin-bottom: 5px;
+            padding: 5px;
+            border-left: 3px solid #667eea;
+            padding-left: 10px;
+        }
+
+        .log-entry.error {
+            border-left-color: #f44336;
+            color: #ff6b6b;
+        }
+
+        .log-entry.success {
+            border-left-color: #4CAF50;
+            color: #4CAF50;
+        }
+
+        .log-entry.info {
+            border-left-color: #2196F3;
+            color: #64b5f6;
+        }
+
+        .timestamp {
+            color: #888;
+            font-size: 0.9em;
+            margin-right: 8px;
+        }
+
+        .pi-info {
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+        }
+
+        .pi-info-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 5px 0;
+            border-bottom: 1px solid #ddd;
+        }
+
+        .pi-info-item:last-child {
+            border-bottom: none;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 0.8em;
+            font-weight: 600;
+        }
+
+        .badge.online {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .badge.offline {
+            background: #f44336;
+            color: white;
+        }
+
+        /* Drone Telemetry Styles */
+        .telemetry-tabs {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #ddd;
+        }
+
+        .telemetry-tab {
+            padding: 10px 20px;
+            background: #f5f5f5;
+            border: none;
+            border-radius: 5px 5px 0 0;
+            cursor: pointer;
+            font-weight: 600;
+            color: #666;
+            transition: all 0.3s;
+        }
+
+        .telemetry-tab.active {
+            background: white;
+            color: #667eea;
+            border-bottom: 2px solid #667eea;
+        }
+
+        .telemetry-tab:hover {
+            background: #e8e8e8;
+        }
+
+        .telemetry-content {
+            display: none;
+        }
+
+        .telemetry-content.active {
+            display: block;
+        }
+
+        .telemetry-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .telemetry-item {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+
+        .telemetry-label {
+            font-size: 0.85em;
+            color: #666;
+            margin-bottom: 5px;
+            text-transform: uppercase;
+        }
+
+        .telemetry-value {
+            font-size: 1.8em;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .telemetry-unit {
+            font-size: 0.7em;
+            color: #999;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: 600;
+            margin: 5px;
+        }
+
+        .status-badge.connected {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .status-badge.simulation {
+            background: #2196F3;
+            color: white;
+        }
+
+        .status-badge.disconnected {
+            background: #f44336;
+            color: white;
+        }
+
+        .status-badge.armed {
+            background: #f44336;
+            color: white;
+            animation: blink 1s infinite;
+        }
+
+        .status-badge.disarmed {
+            background: #9E9E9E;
+            color: white;
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .attitude-display {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            margin: 15px 0;
+        }
+
+        .attitude-item {
+            text-align: center;
+            padding: 20px;
+            border-radius: 10px;
+        }
+
+        .attitude-item.roll {
+            background: linear-gradient(135deg, #e3f2fd, #bbdefb);
+        }
+
+        .attitude-item.pitch {
+            background: linear-gradient(135deg, #e8f5e9, #c8e6c9);
+        }
+
+        .attitude-item.yaw {
+            background: linear-gradient(135deg, #f3e5f5, #e1bee7);
+        }
+
+        .attitude-value {
+            font-size: 2.5em;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+
+        .gps-coordinates {
+            background: linear-gradient(135deg, #fff3e0, #ffe0b2);
+            padding: 20px;
+            border-radius: 10px;
+            margin: 15px 0;
+        }
+
+        .coord-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(0,0,0,0.1);
+        }
+
+        .coord-row:last-child {
+            border-bottom: none;
+        }
+
+        .battery-display {
+            background: linear-gradient(135deg, #fff9c4, #fff59d);
+            padding: 20px;
+            border-radius: 10px;
+            margin: 15px 0;
+        }
+
+        .battery-level {
+            font-size: 2.5em;
+            font-weight: bold;
+            text-align: center;
+            margin: 10px 0;
+        }
+
+        .battery-bar {
+            width: 100%;
+            height: 30px;
+            background: #e0e0e0;
+            border-radius: 15px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .battery-fill {
+            height: 100%;
+            transition: width 0.5s, background 0.5s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+        }
+
+        .battery-fill.high {
+            background: linear-gradient(90deg, #4CAF50, #8BC34A);
+        }
+
+        .battery-fill.medium {
+            background: linear-gradient(90deg, #FFC107, #FF9800);
+        }
+
+        .battery-fill.low {
+            background: linear-gradient(90deg, #f44336, #E91E63);
+        }
+
+        .waypoint-item {
+            background: #f5f5f5;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            border-left: 4px solid #4CAF50;
+            transition: all 0.3s;
+        }
+
+        .waypoint-item:hover {
+            background: #e8f5e9;
+            transform: translateX(5px);
+        }
+
+        .waypoint-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .waypoint-id {
+            font-weight: bold;
+            color: #333;
+            font-size: 0.9em;
+        }
+
+        .waypoint-time {
+            font-size: 0.8em;
+            color: #666;
+        }
+
+        .waypoint-coords {
+            font-size: 0.85em;
+            color: #555;
+            margin: 4px 0;
+        }
+
+        .waypoint-delete {
+            background: #f44336;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.8em;
+            transition: all 0.2s;
+        }
+
+        .waypoint-delete:hover {
+            background: #d32f2f;
+            transform: scale(1.05);
+        }
+
+        @media (max-width: 768px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            button {
+                min-width: 100%;
+            }
+
+            .telemetry-tabs {
+                flex-wrap: wrap;
+            }
+
+            .telemetry-tab {
+                flex: 1 1 45%;
+            }
+
+            .attitude-display {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-left">
+                <h1>🎥 Raspberry Pi Control Dashboard</h1>
+                <p>
+                    <span class="status-indicator" id="connectionStatus"></span>
+                    <span id="connectionText">Connecting to server...</span>
+                </p>
+            </div>
+            <div class="header-right">
+                <a href="/mission_planner.html" class="nav-button">🛰️ KML Mission Planner</a>
+            </div>
+        </header>
+
+        <div class="grid">
+            <!-- Video Stream Card -->
+            <div class="card" style="grid-column: span 2;">
+                <div class="card-header">
+                    <h2 class="card-title">📹 Live Video Stream</h2>
+                </div>
+                
+                <select class="pi-selector" id="videoStreamPiSelect">
+                    <option value="">Select a Raspberry Pi...</option>
+                </select>
+
+                <div class="video-container">
+                    <img id="videoFeed" style="display: none;" />
+                    <div class="video-overlay" id="videoOverlay">
+                        Select a Pi and start streaming
+                    </div>
+                </div>
+
+                <div class="controls">
+                    <button class="btn-success" onclick="startStream()">▶ Start Stream</button>
+                    <button class="btn-danger" onclick="stopStream()">⏹ Stop Stream</button>
+                    <button class="btn-primary" onclick="captureImage()">📸 Capture Image</button>
+                    <button class="btn-primary" onclick="testCamera()">🔧 Test Camera</button>
+                </div>
+            </div>
+
+            <!-- System Statistics Card -->
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">📊 System Statistics</h2>
+                </div>
+                
+                <select class="pi-selector" id="statsPiSelect">
+                    <option value="">Select a Raspberry Pi...</option>
+                </select>
+
+                <div id="piInfo" class="pi-info" style="display: none;">
+                    <div class="pi-info-item">
+                        <span>Status:</span>
+                        <span class="badge online" id="piStatus">Online</span>
+                    </div>
+                    <div class="pi-info-item">
+                        <span>Last Update:</span>
+                        <span id="lastUpdate">-</span>
+                    </div>
+                </div>
+
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="stat-label">CPU Temperature</div>
+                        <div class="stat-value" id="cpuTemp">--<span class="stat-unit">°C</span></div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="cpuTempBar" style="width: 0%"></div>
+                        </div>
+                    </div>
+
+                    <div class="stat-item">
+                        <div class="stat-label">CPU Usage</div>
+                        <div class="stat-value" id="cpuUsage">--<span class="stat-unit">%</span></div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="cpuUsageBar" style="width: 0%"></div>
+                        </div>
+                    </div>
+
+                    <div class="stat-item">
+                        <div class="stat-label">Memory Usage</div>
+                        <div class="stat-value" id="memoryUsage">--<span class="stat-unit">%</span></div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="memoryBar" style="width: 0%"></div>
+                        </div>
+                    </div>
+
+                    <div class="stat-item">
+                        <div class="stat-label">Disk Usage</div>
+                        <div class="stat-value" id="diskUsage">--<span class="stat-unit">%</span></div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="diskBar" style="width: 0%"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="controls">
+                    <button class="btn-primary" onclick="refreshStats()">🔄 Refresh</button>
+                </div>
+            </div>
+
+            <!-- Control Panel Card -->
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">🎮 Control Panel</h2>
+                </div>
+                
+                <select class="pi-selector" id="controlPiSelect">
+                    <option value="">Select a Raspberry Pi...</option>
+                </select>
+
+                <div class="controls">
+                    <button class="btn-warning" onclick="sendCommand('reboot')">🔄 Reboot</button>
+                    <button class="btn-danger" onclick="sendCommand('shutdown')">⏻ Shutdown</button>
+                </div>
+
+                <div class="controls">
+                    <button class="btn-primary" onclick="sendCommand('camera_test')">📷 Test Camera</button>
+                    <button class="btn-primary" onclick="sendCommand('capture_image')">📸 Capture</button>
+                </div>
+
+                <div class="controls">
+                    <button class="btn-success" onclick="markWaypoint()" style="width: 100%;">📍 Mark Current Location</button>
+                </div>
+            </div>
+
+            <!-- Marked Waypoints Card -->
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">📍 Marked Waypoints</h2>
+                </div>
+                
+                <div id="waypointsList" style="max-height: 300px; overflow-y: auto;">
+                    <div style="text-align: center; padding: 20px; opacity: 0.6;">
+                        No waypoints marked yet
+                    </div>
+                </div>
+
+                <div class="controls">
+                    <button class="btn-primary" onclick="refreshWaypoints()">🔄 Refresh</button>
+                    <button class="btn-danger" onclick="clearAllWaypoints()">🗑️ Clear All</button>
+                </div>
+            </div>
+
+            <!-- Activity Log Card -->
+            <div class="card" style="grid-column: span 2;">
+                <div class="card-header">
+                    <h2 class="card-title">📝 Activity Log</h2>
+                </div>
+                
+                <div class="log-container" id="activityLog">
+                    <div class="log-entry info">
+                        <span class="timestamp">[Starting]</span>
+                        Dashboard initialized
+                    </div>
+                </div>
+
+                <div class="controls">
+                    <button class="btn-danger" onclick="clearLog()">🗑️ Clear Log</button>
+                </div>
+            </div>
+
+            <!-- Drone Telemetry Card -->
+            <div class="card" style="grid-column: span 2;">
+                <div class="card-header">
+                    <h2 class="card-title">🚁 Drone Flight Control</h2>
+                </div>
+                
+                <select class="pi-selector" id="droneControlPiSelect">
+                    <option value="">Select a Raspberry Pi...</option>
+                </select>
+
+                <div id="droneStatus" style="margin-bottom: 15px; padding: 15px; background: #f5f5f5; border-radius: 8px;">
+                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; text-align: center;">
+                        <div>
+                            <div style="font-size: 0.9em; color: #666;">Armed</div>
+                            <div style="font-size: 1.5em; font-weight: bold;" id="drone-armed-status">--</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.9em; color: #666;">Flight Mode</div>
+                            <div style="font-size: 1.5em; font-weight: bold;" id="drone-mode-status">--</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.9em; color: #666;">Battery</div>
+                            <div style="font-size: 1.5em; font-weight: bold;" id="drone-battery-status">--</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin-bottom: 15px;">
+                    <!-- Basic Commands -->
+                    <div style="background: #f8f9fa; padding: 15px; border-radius: 8px;">
+                        <h3 style="margin-bottom: 10px; color: #667eea;">⚡ Basic Commands</h3>
+                        <div class="controls">
+                            <button class="btn-success" onclick="armDrone()">🔓 ARM</button>
+                            <button class="btn-danger" onclick="disarmDrone()">🔒 DISARM</button>
+                        </div>
+                        <div class="controls">
+                            <button class="btn-primary" onclick="takeoffDrone()">🚀 Takeoff</button>
+                            <button class="btn-primary" onclick="landDrone()">🛬 Land</button>
+                        </div>
+                        <div class="controls">
+                            <button class="btn-warning" onclick="returnToLaunch()">🏠 Return to Launch</button>
+                        </div>
+                    </div>
+
+                    <!-- Flight Modes -->
+                    <div style="background: #f8f9fa; padding: 15px; border-radius: 8px;">
+                        <h3 style="margin-bottom: 10px; color: #667eea;">✈️ Flight Modes</h3>
+                        <div class="controls">
+                            <button class="btn-primary" onclick="setFlightMode('GUIDED')" style="width: 48%;">GUIDED</button>
+                            <button class="btn-primary" onclick="setFlightMode('AUTO')" style="width: 48%;">AUTO</button>
+                        </div>
+                        <div class="controls">
+                            <button class="btn-primary" onclick="setFlightMode('LOITER')" style="width: 48%;">LOITER</button>
+                            <button class="btn-primary" onclick="setFlightMode('STABILIZE')" style="width: 48%;">STABILIZE</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Mission Control -->
+                <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+                    <h3 style="margin-bottom: 10px; color: #667eea;">📋 Mission Control</h3>
+                    <div class="controls">
+                        <button class="btn-primary" onclick="uploadMissionFromWaypoints()">📤 Upload Mission</button>
+                        <button class="btn-success" onclick="startMission()">▶️ Start Mission</button>
+                        <button class="btn-danger" onclick="clearMission()">🗑️ Clear Mission</button>
+                    </div>
+                    <div style="margin-top: 10px; padding: 10px; background: white; border-radius: 5px;">
+                        <label>Takeoff Altitude (m):</label>
+                        <input type="number" id="mission-takeoff-alt" value="10" min="2" max="120" style="width: 100%; padding: 8px; margin-top: 5px; border: 1px solid #ddd; border-radius: 4px;">
+                    </div>
+                </div>
+
+                <!-- Navigation -->
+                <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+                    <h3 style="margin-bottom: 10px; color: #667eea;">🧭 Navigation</h3>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                        <div>
+                            <label>Latitude:</label>
+                            <input type="number" id="goto-lat" step="0.000001" style="width: 100%; padding: 8px; margin-top: 5px; border: 1px solid #ddd; border-radius: 4px;">
+                        </div>
+                        <div>
+                            <label>Longitude:</label>
+                            <input type="number" id="goto-lon" step="0.000001" style="width: 100%; padding: 8px; margin-top: 5px; border: 1px solid #ddd; border-radius: 4px;">
+                        </div>
+                        <div>
+                            <label>Altitude (m):</label>
+                            <input type="number" id="goto-alt" value="10" min="2" max="120" style="width: 100%; padding: 8px; margin-top: 5px; border: 1px solid #ddd; border-radius: 4px;">
+                        </div>
+                        <div>
+                            <label>Groundspeed (m/s):</label>
+                            <input type="number" id="goto-speed" value="5" min="1" max="15" style="width: 100%; padding: 8px; margin-top: 5px; border: 1px solid #ddd; border-radius: 4px;">
+                        </div>
+                    </div>
+                    <div class="controls" style="margin-top: 10px;">
+                        <button class="btn-primary" onclick="gotoLocation()">📍 Go To Location</button>
+                        <button class="btn-primary" onclick="useCurrentTelemetry()">📡 Use Current Location</button>
+                    </div>
+                </div>
+
+                <!-- Safety Features -->
+                <div style="background: #fff3cd; padding: 15px; border-radius: 8px; border: 2px solid #ffc107;">
+                    <h3 style="margin-bottom: 10px; color: #ff9800;">🛡️ Safety Features</h3>
+                    <div class="controls">
+                        <button class="btn-primary" onclick="setGeofence()">📐 Set Geofence</button>
+                        <button class="btn-primary" onclick="preFlightCheck()">✅ Pre-Flight Check</button>
+                        <button class="btn-warning" onclick="getSafetyStatus()">📊 Safety Status</button>
+                    </div>
+                    <div class="controls">
+                        <button class="btn-danger" onclick="emergencyStop()" style="width: 100%;">🚨 EMERGENCY STOP</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Yellow Crop Detection Card -->
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">🌾 Yellow Crop Detection</h2>
+                </div>
+                
+                <!-- Mission Controls -->
+                <div style="background: #e8f5e9; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 2px solid #4caf50;">
+                    <h3 style="margin-bottom: 10px; color: #2e7d32;">🚀 Mission Control</h3>
+                    <div style="margin-bottom: 10px; padding: 10px; background: white; border-radius: 5px;">
+                        <input type="text" id="mission-name-input" placeholder="Mission Name (e.g., Field A - Yellow Crop Survey)" 
+                               style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 8px;">
+                        <input type="number" id="mission-altitude-input" placeholder="Altitude (m)" value="15" 
+                               style="width: 48%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; margin-right: 4%;">
+                        <input type="number" id="mission-speed-input" placeholder="Speed (m/s)" value="2.0" step="0.1"
+                               style="width: 48%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                    </div>
+                    <div class="controls">
+                        <button class="btn-success" onclick="startMission()" id="start-mission-btn" style="width: 48%; margin-right: 4%;">🚀 Start Mission</button>
+                        <button class="btn-danger" onclick="stopMission()" id="stop-mission-btn" style="width: 48%;" disabled>🏁 Stop Mission</button>
+                    </div>
+                    <div style="margin-top: 10px; padding: 10px; background: white; border-radius: 5px; text-align: center;">
+                        <span style="font-size: 0.9em; color: #666;">Mission:</span>
+                        <span id="mission-status" style="font-weight: bold; margin-left: 5px; color: #d32f2f;">No Active Mission</span>
+                    </div>
+                    <div id="mission-id-display" style="margin-top: 5px; padding: 8px; background: #fff3e0; border-radius: 4px; font-size: 0.85em; color: #e65100; display: none;">
+                        <strong>Mission ID:</strong> <span id="current-mission-id">-</span>
+                    </div>
+                </div>
+                
+                <!-- Detection Controls -->
+                <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+                    <h3 style="margin-bottom: 10px; color: #667eea;">🎯 Detection Controls</h3>
+                    <div class="controls">
+                        <button class="btn-success" onclick="startDetection()" id="start-detection-btn">▶️ Start Detection</button>
+                        <button class="btn-danger" onclick="stopDetection()" id="stop-detection-btn">⏹️ Stop Detection</button>
+                    </div>
+                    <div style="margin-top: 10px; padding: 10px; background: white; border-radius: 5px; text-align: center;">
+                        <span style="font-size: 0.9em; color: #666;">Status:</span>
+                        <span id="detection-status" style="font-weight: bold; margin-left: 5px;">Inactive</span>
+                    </div>
+                </div>
+
+                <!-- Detection Statistics -->
+                <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+                    <h3 style="margin-bottom: 10px; color: #667eea;">📊 Mission Stats</h3>
+                    <div class="stats-grid">
+                        <div class="stat-item">
+                            <div class="stat-label">Detections</div>
+                            <div class="stat-value" id="det-total">0</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Periodic Images</div>
+                            <div class="stat-value" id="periodic-count">0</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Avg Confidence</div>
+                            <div class="stat-value" id="det-confidence">0%</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Detection Rate</div>
+                            <div class="stat-value" id="det-rate">0/min</div>
+                        </div>
+                    </div>
+                    <div class="controls" style="margin-top: 10px;">
+                        <button class="btn-primary" onclick="refreshDetectionStats()" style="width: 100%;">🔄 Refresh Stats</button>
+                    </div>
+                </div>
+
+                <!-- Recent Detections -->
+                <div style="background: #f8f9fa; padding: 15px; border-radius: 8px;">
+                    <h3 style="margin-bottom: 10px; color: #667eea;">📸 Recent Detections</h3>
+                    <div id="detection-list" style="max-height: 400px; overflow-y: auto;">
+                        <div style="text-align: center; color: #999; padding: 20px;">
+                            No detections yet
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Drone Telemetry Card -->
+            <div class="card" style="grid-column: span 2;">
+                <div class="card-header">
+                    <h2 class="card-title">🚁 Comprehensive Drone Telemetry</h2>
+                </div>
+                
+                <select class="pi-selector" id="telemetryPiSelect">
+                    <option value="">Select a Raspberry Pi...</option>
+                </select>
+
+                <div id="telemetryStatus" style="margin-bottom: 15px; text-align: center;">
+                    <span class="status-badge disconnected">Waiting for telemetry...</span>
+                </div>
+
+                <!-- Telemetry Tabs -->
+                <div class="telemetry-tabs">
+                    <button class="telemetry-tab active" onclick="switchTelemetryTab('overview')">📊 Overview</button>
+                    <button class="telemetry-tab" onclick="switchTelemetryTab('gps')">📍 GPS</button>
+                    <button class="telemetry-tab" onclick="switchTelemetryTab('attitude')">🎯 Attitude</button>
+                    <button class="telemetry-tab" onclick="switchTelemetryTab('power')">🔋 Power</button>
+                    <button class="telemetry-tab" onclick="switchTelemetryTab('system')">⚙️ System</button>
+                </div>
+
+                <!-- Overview Tab -->
+                <div id="tab-overview" class="telemetry-content active">
+                    <div class="telemetry-grid">
+                        <div class="telemetry-item">
+                            <div class="telemetry-label">Flight Mode</div>
+                            <div class="telemetry-value" id="tel-flight-mode">--</div>
+                        </div>
+                        <div class="telemetry-item">
+                            <div class="telemetry-label">Altitude</div>
+                            <div class="telemetry-value" id="tel-altitude">--<span class="telemetry-unit">m</span></div>
+                        </div>
+                        <div class="telemetry-item">
+                            <div class="telemetry-label">Ground Speed</div>
+                            <div class="telemetry-value" id="tel-speed">--<span class="telemetry-unit">m/s</span></div>
+                        </div>
+                        <div class="telemetry-item">
+                            <div class="telemetry-label">Battery</div>
+                            <div class="telemetry-value" id="tel-battery">--<span class="telemetry-unit">%</span></div>
+                        </div>
+                    </div>
+
+                    <div class="gps-coordinates">
+                        <h3 style="margin-bottom: 10px;">📍 Current Position</h3>
+                        <div class="coord-row">
+                            <strong>Latitude:</strong>
+                            <span id="tel-overview-lat">--</span>
+                        </div>
+                        <div class="coord-row">
+                            <strong>Longitude:</strong>
+                            <span id="tel-overview-lon">--</span>
+                        </div>
+                        <div class="coord-row">
+                            <strong>Satellites:</strong>
+                            <span id="tel-overview-sats">--</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- GPS Tab -->
+                <div id="tab-gps" class="telemetry-content">
+                    <div class="gps-coordinates">
+                        <h3 style="margin-bottom: 15px;">📍 GPS Coordinates</h3>
+                        <div class="coord-row">
+                            <strong>Latitude:</strong>
+                            <span id="tel-gps-lat">--</span>
+                        </div>
+                        <div class="coord-row">
+                            <strong>Longitude:</strong>
+                            <span id="tel-gps-lon">--</span>
+                        </div>
+                        <div class="coord-row">
+                            <strong>Altitude (MSL):</strong>
+                            <span id="tel-gps-alt">--</span>
+                        </div>
+                        <div class="coord-row">
+                            <strong>Relative Altitude:</strong>
+                            <span id="tel-gps-rel-alt">--</span>
+                        </div>
+                    </div>
+
+                    <div class="telemetry-grid" style="margin-top: 20px;">
+                        <div class="telemetry-item">
+                            <div class="telemetry-label">Satellites</div>
+                            <div class="telemetry-value" id="tel-gps-sats">--</div>
+                        </div>
+                        <div class="telemetry-item">
+                            <div class="telemetry-label">Fix Type</div>
+                            <div class="telemetry-value" id="tel-gps-fix">--</div>
+                        </div>
+                        <div class="telemetry-item">
+                            <div class="telemetry-label">HDOP</div>
+                            <div class="telemetry-value" id="tel-gps-hdop">--</div>
+                        </div>
+                        <div class="telemetry-item">
+                            <div class="telemetry-label">Heading</div>
+                            <div class="telemetry-value" id="tel-gps-heading">--<span class="telemetry-unit">°</span></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Attitude Tab -->
+                <div id="tab-attitude" class="telemetry-content">
+                    <h3 style="margin-bottom: 15px;">🎯 Attitude & Orientation</h3>
+                    <div class="attitude-display">
+                        <div class="attitude-item roll">
+                            <div class="telemetry-label">ROLL</div>
+                            <div class="attitude-value" id="tel-roll">--°</div>
+                            <div style="font-size: 0.85em; color: #666;">Left/Right</div>
+                        </div>
+                        <div class="attitude-item pitch">
+                            <div class="telemetry-label">PITCH</div>
+                            <div class="attitude-value" id="tel-pitch">--°</div>
+                            <div style="font-size: 0.85em; color: #666;">Up/Down</div>
+                        </div>
+                        <div class="attitude-item yaw">
+                            <div class="telemetry-label">YAW</div>
+                            <div class="attitude-value" id="tel-yaw">--°</div>
+                            <div style="font-size: 0.85em; color: #666;">Rotation</div>
+                        </div>
+                    </div>
+
+                    <h3 style="margin: 20px 0 15px 0;">💨 Velocity</h3>
+                    <div class="telemetry-grid">
+                        <div class="telemetry-item">
+                            <div class="telemetry-label">Ground Speed</div>
+                            <div class="telemetry-value" id="tel-groundspeed">--<span class="telemetry-unit">m/s</span></div>
+                        </div>
+                        <div class="telemetry-item">
+                            <div class="telemetry-label">Air Speed</div>
+                            <div class="telemetry-value" id="tel-airspeed">--<span class="telemetry-unit">m/s</span></div>
+                        </div>
+                        <div class="telemetry-item">
+                            <div class="telemetry-label">Vx</div>
+                            <div class="telemetry-value" id="tel-vx">--<span class="telemetry-unit">m/s</span></div>
+                        </div>
+                        <div class="telemetry-item">
+                            <div class="telemetry-label">Vy</div>
+                            <div class="telemetry-value" id="tel-vy">--<span class="telemetry-unit">m/s</span></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Power Tab -->
+                <div id="tab-power" class="telemetry-content">
+                    <div class="battery-display">
+                        <h3 style="margin-bottom: 15px; text-align: center;">🔋 Battery Status</h3>
+                        <div class="battery-level" id="tel-power-level">--%</div>
+                        <div class="battery-bar">
+                            <div class="battery-fill high" id="tel-battery-fill" style="width: 0%">0%</div>
+                        </div>
+                    </div>
+
+                    <div class="telemetry-grid" style="margin-top: 20px;">
+                        <div class="telemetry-item">
+                            <div class="telemetry-label">Voltage</div>
+                            <div class="telemetry-value" id="tel-voltage">--<span class="telemetry-unit">V</span></div>
+                        </div>
+                        <div class="telemetry-item">
+                            <div class="telemetry-label">Current</div>
+                            <div class="telemetry-value" id="tel-current">--<span class="telemetry-unit">A</span></div>
+                        </div>
+                        <div class="telemetry-item">
+                            <div class="telemetry-label">Power</div>
+                            <div class="telemetry-value" id="tel-power">--<span class="telemetry-unit">W</span></div>
+                        </div>
+                        <div class="telemetry-item">
+                            <div class="telemetry-label">Remaining</div>
+                            <div class="telemetry-value" id="tel-remaining">--<span class="telemetry-unit">%</span></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- System Tab -->
+                <div id="tab-system" class="telemetry-content">
+                    <h3 style="margin-bottom: 15px;">⚙️ Flight Status</h3>
+                    <div class="pi-info">
+                        <div class="pi-info-item">
+                            <span>Flight Mode:</span>
+                            <strong id="tel-sys-mode">--</strong>
+                        </div>
+                        <div class="pi-info-item">
+                            <span>Armed Status:</span>
+                            <span id="tel-sys-armed">--</span>
+                        </div>
+                        <div class="pi-info-item">
+                            <span>System Status:</span>
+                            <strong id="tel-sys-status">--</strong>
+                        </div>
+                        <div class="pi-info-item">
+                            <span>Heading:</span>
+                            <strong id="tel-sys-heading">--</strong>
+                        </div>
+                    </div>
+
+                    <h3 style="margin: 20px 0 15px 0;">✅ System Health</h3>
+                    <div class="pi-info">
+                        <div class="pi-info-item">
+                            <span>EKF Status:</span>
+                            <span id="tel-sys-ekf">--</span>
+                        </div>
+                        <div class="pi-info-item">
+                            <span>GPS Fix:</span>
+                            <span id="tel-sys-gps-fix">--</span>
+                        </div>
+                        <div class="pi-info-item">
+                            <span>Connection:</span>
+                            <span id="tel-sys-connection">--</span>
+                        </div>
+                        <div class="pi-info-item">
+                            <span>Last Update:</span>
+                            <span id="tel-sys-timestamp">--</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="controls">
+                    <button class="btn-primary" onclick="requestTelemetry()">🔄 Refresh Telemetry</button>
+                    <button class="btn-warning" onclick="reconnectPixhawk()">🔌 Reconnect Pixhawk</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        // Initialize Socket.IO
+        const socket = io();
+        
+        // State management
+        let connectedPis = new Map();
+        let currentStreamingPi = null;
+        let streamInterval = null;
+
+        // Update connection status
+        function updateConnectionStatus(connected) {
+            const indicator = document.getElementById('connectionStatus');
+            const text = document.getElementById('connectionText');
+            
+            if (connected) {
+                indicator.className = 'status-indicator connected';
+                text.textContent = 'Connected to server';
+            } else {
+                indicator.className = 'status-indicator disconnected';
+                text.textContent = 'Disconnected from server';
+            }
+        }
+
+        // Add log entry
+        function addLog(message, type = 'info') {
+            const log = document.getElementById('activityLog');
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            
+            const timestamp = new Date().toLocaleTimeString();
+            entry.innerHTML = `<span class="timestamp">[${timestamp}]</span>${message}`;
+            
+            log.insertBefore(entry, log.firstChild);
+            
+            // Keep only last 50 entries
+            while (log.children.length > 50) {
+                log.removeChild(log.lastChild);
+            }
+        }
+
+        // Update Pi selectors
+        function updatePiSelectors() {
+            const selectors = [
+                document.getElementById('videoStreamPiSelect'),
+                document.getElementById('statsPiSelect'),
+                document.getElementById('controlPiSelect'),
+                document.getElementById('telemetryPiSelect'),
+                document.getElementById('droneControlPiSelect')
+            ];
+
+            selectors.forEach(select => {
+                const currentValue = select.value;
+                select.innerHTML = '<option value="">Select a Raspberry Pi...</option>';
+                
+                connectedPis.forEach((pi, id) => {
+                    const option = document.createElement('option');
+                    option.value = id;
+                    option.textContent = `${id} (${pi.connected ? 'Online' : 'Offline'})`;
+                    select.appendChild(option);
+                });
+                
+                if (currentValue && connectedPis.has(currentValue)) {
+                    select.value = currentValue;
+                }
+            });
+        }
+
+        // Update statistics display
+        function updateStats(stats) {
+            if (!stats) return;
+
+            // CPU Temperature
+            if (stats.cpu_temp !== null && stats.cpu_temp !== undefined) {
+                document.getElementById('cpuTemp').innerHTML = 
+                    `${stats.cpu_temp.toFixed(1)}<span class="stat-unit">°C</span>`;
+                const tempPercent = Math.min((stats.cpu_temp / 80) * 100, 100);
+                const tempBar = document.getElementById('cpuTempBar');
+                tempBar.style.width = `${tempPercent}%`;
+                tempBar.className = tempPercent > 70 ? 'progress-fill high' : 'progress-fill';
+            }
+
+            // CPU Usage
+            if (stats.cpu_usage !== null && stats.cpu_usage !== undefined) {
+                document.getElementById('cpuUsage').innerHTML = 
+                    `${stats.cpu_usage.toFixed(1)}<span class="stat-unit">%</span>`;
+                const cpuBar = document.getElementById('cpuUsageBar');
+                cpuBar.style.width = `${stats.cpu_usage}%`;
+                cpuBar.className = stats.cpu_usage > 80 ? 'progress-fill high' : 'progress-fill';
+            }
+
+            // Memory Usage
+            if (stats.memory_usage !== null && stats.memory_usage !== undefined) {
+                document.getElementById('memoryUsage').innerHTML = 
+                    `${stats.memory_usage.toFixed(1)}<span class="stat-unit">%</span>`;
+                const memBar = document.getElementById('memoryBar');
+                memBar.style.width = `${stats.memory_usage}%`;
+                memBar.className = stats.memory_usage > 80 ? 'progress-fill high' : 'progress-fill';
+            }
+
+            // Disk Usage
+            if (stats.disk_usage !== null && stats.disk_usage !== undefined) {
+                document.getElementById('diskUsage').innerHTML = 
+                    `${stats.disk_usage.toFixed(1)}<span class="stat-unit">%</span>`;
+                const diskBar = document.getElementById('diskBar');
+                diskBar.style.width = `${stats.disk_usage}%`;
+                diskBar.className = stats.disk_usage > 80 ? 'progress-fill high' : 'progress-fill';
+            }
+
+            // Update timestamp
+            if (stats.timestamp) {
+                const date = new Date(stats.timestamp);
+                document.getElementById('lastUpdate').textContent = date.toLocaleTimeString();
+            }
+
+            // Show pi info
+            document.getElementById('piInfo').style.display = 'block';
+        }
+
+        // Socket.IO event handlers
+        socket.on('connect', () => {
+            addLog('Connected to server', 'success');
+            updateConnectionStatus(true);
+            socket.emit('request_pi_list');
+        });
+
+        socket.on('disconnect', () => {
+            addLog('Disconnected from server', 'error');
+            updateConnectionStatus(false);
+        });
+
+        socket.on('pi_connected', (data) => {
+            addLog(`Pi connected: ${data.pi_id}`, 'success');
+            connectedPis.set(data.pi_id, { connected: true });
+            updatePiSelectors();
+        });
+
+        socket.on('pi_disconnected', (data) => {
+            addLog(`Pi disconnected: ${data.pi_id}`, 'error');
+            connectedPis.delete(data.pi_id);
+            updatePiSelectors();
+        });
+
+        socket.on('pi_list', (data) => {
+            data.pis.forEach(pi => {
+                connectedPis.set(pi.id, pi);
+            });
+            updatePiSelectors();
+            addLog(`Found ${data.pis.length} connected Pi(s)`, 'info');
+        });
+
+        socket.on('pi_stats_update', (data) => {
+            const selectedPi = document.getElementById('statsPiSelect').value;
+            if (data.pi_id === selectedPi) {
+                updateStats(data.stats);
+            }
+        });
+
+        socket.on('video_frame', (data) => {
+            if (data.pi_id === currentStreamingPi) {
+                const video = document.getElementById('videoFeed');
+                const overlay = document.getElementById('videoOverlay');
+                video.src = 'data:image/jpeg;base64,' + data.frame;
+                video.style.display = 'block';
+                overlay.style.display = 'none';
+            }
+        });
+
+        socket.on('command_response', (data) => {
+            const result = data.result;
+            const type = result.success ? 'success' : 'error';
+            addLog(`${data.pi_id}: ${result.message}`, type);
+        });
+
+        socket.on('stream_update', (data) => {
+            addLog(`Stream ${data.status} for ${data.pi_id}`, 'info');
+        });
+
+        // Drone telemetry handlers
+        socket.on('drone_telemetry_update', (data) => {
+            const selectedPi = document.getElementById('telemetryPiSelect').value;
+            if (data.pi_id === selectedPi) {
+                updateTelemetryDisplay(data.telemetry);
+            }
+        });
+
+        socket.on('pixhawk_status_update', (data) => {
+            const selectedPi = document.getElementById('telemetryPiSelect').value;
+            if (data.pi_id === selectedPi) {
+                updateConnectionStatus_Telemetry(data.status);
+            }
+        });
+
+        // Control functions
+        function startStream() {
+            const piId = document.getElementById('videoStreamPiSelect').value;
+            if (!piId) {
+                alert('Please select a Raspberry Pi');
+                return;
+            }
+
+            currentStreamingPi = piId;
+            socket.emit('start_stream', {
+                pi_id: piId,
+                settings: {
+                    resolution: [640, 480],
+                    framerate: 30
+                }
+            });
+            addLog(`Starting stream from ${piId}`, 'info');
+        }
+
+        function stopStream() {
+            if (!currentStreamingPi) return;
+
+            socket.emit('stop_stream', { pi_id: currentStreamingPi });
+            
+            const video = document.getElementById('videoFeed');
+            const overlay = document.getElementById('videoOverlay');
+            video.style.display = 'none';
+            overlay.style.display = 'flex';
+            overlay.textContent = 'Stream stopped';
+            
+            addLog(`Stopped stream from ${currentStreamingPi}`, 'info');
+            currentStreamingPi = null;
+        }
+
+        function captureImage() {
+            const piId = document.getElementById('videoStreamPiSelect').value;
+            if (!piId) {
+                alert('Please select a Raspberry Pi');
+                return;
+            }
+
+            sendCommand('capture_image', piId);
+        }
+
+        function testCamera() {
+            const piId = document.getElementById('videoStreamPiSelect').value;
+            if (!piId) {
+                alert('Please select a Raspberry Pi');
+                return;
+            }
+
+            sendCommand('camera_test', piId);
+        }
+
+        function refreshStats() {
+            const piId = document.getElementById('statsPiSelect').value;
+            if (!piId) {
+                alert('Please select a Raspberry Pi');
+                return;
+            }
+
+            socket.emit('request_stats', { pi_id: piId });
+            addLog(`Requesting stats from ${piId}`, 'info');
+        }
+
+        function sendCommand(command, targetPi = null) {
+            const piId = targetPi || document.getElementById('controlPiSelect').value;
+            if (!piId) {
+                alert('Please select a Raspberry Pi');
+                return;
+            }
+
+            if (command === 'reboot' || command === 'shutdown') {
+                if (!confirm(`Are you sure you want to ${command} ${piId}?`)) {
+                    return;
+                }
+            }
+
+            socket.emit('send_command', {
+                pi_id: piId,
+                command: command,
+                args: {}
+            });
+            
+            addLog(`Sent command '${command}' to ${piId}`, 'info');
+        }
+
+        function clearLog() {
+            document.getElementById('activityLog').innerHTML = '';
+            addLog('Log cleared', 'info');
+        }
+
+        // Telemetry functions
+        function switchTelemetryTab(tabName) {
+            // Hide all tabs
+            document.querySelectorAll('.telemetry-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            document.querySelectorAll('.telemetry-tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+
+            // Show selected tab
+            document.getElementById(`tab-${tabName}`).classList.add('active');
+            event.target.classList.add('active');
+        }
+
+        function updateTelemetryDisplay(telemetry) {
+            if (!telemetry) return;
+
+            // Update status badges
+            const statusDiv = document.getElementById('telemetryStatus');
+            let statusHTML = '';
+            
+            if (telemetry.connected) {
+                if (telemetry.simulation_mode) {
+                    statusHTML += '<span class="status-badge simulation">🔵 Simulation</span>';
+                } else {
+                    statusHTML += '<span class="status-badge connected">🟢 Connected</span>';
+                }
+            } else {
+                statusHTML += '<span class="status-badge disconnected">🔴 Disconnected</span>';
+            }
+
+            if (telemetry.armed) {
+                statusHTML += '<span class="status-badge armed">⚠️ ARMED</span>';
+            } else {
+                statusHTML += '<span class="status-badge disarmed">🔒 Disarmed</span>';
+            }
+
+            statusDiv.innerHTML = statusHTML;
+
+            // Overview tab
+            document.getElementById('tel-flight-mode').textContent = telemetry.flight_mode || 'UNKNOWN';
+            document.getElementById('tel-altitude').innerHTML = `${(telemetry.gps?.alt || 0).toFixed(1)}<span class="telemetry-unit">m</span>`;
+            document.getElementById('tel-speed').innerHTML = `${(telemetry.velocity?.groundspeed || 0).toFixed(1)}<span class="telemetry-unit">m/s</span>`;
+            document.getElementById('tel-battery').innerHTML = `${telemetry.battery?.level || 0}<span class="telemetry-unit">%</span>`;
+            
+            document.getElementById('tel-overview-lat').textContent = (telemetry.gps?.lat || 0).toFixed(6);
+            document.getElementById('tel-overview-lon').textContent = (telemetry.gps?.lon || 0).toFixed(6);
+            document.getElementById('tel-overview-sats').textContent = `${telemetry.gps?.satellites || 0} visible`;
+
+            // GPS tab
+            document.getElementById('tel-gps-lat').textContent = (telemetry.gps?.lat || 0).toFixed(6) + '°';
+            document.getElementById('tel-gps-lon').textContent = (telemetry.gps?.lon || 0).toFixed(6) + '°';
+            document.getElementById('tel-gps-alt').textContent = (telemetry.gps?.alt || 0).toFixed(1) + ' m';
+            document.getElementById('tel-gps-rel-alt').textContent = (telemetry.gps?.relative_alt || 0).toFixed(1) + ' m';
+            document.getElementById('tel-gps-sats').textContent = telemetry.gps?.satellites || 0;
+            document.getElementById('tel-gps-fix').textContent = getGPSFixType(telemetry.gps?.fix_type);
+            document.getElementById('tel-gps-hdop').textContent = (telemetry.gps?.hdop || 0).toFixed(2);
+            document.getElementById('tel-gps-heading').innerHTML = `${telemetry.heading || 0}<span class="telemetry-unit">°</span> ${getCompassDirection(telemetry.heading)}`;
+
+            // Attitude tab
+            const roll = telemetry.attitude?.roll || 0;
+            const pitch = telemetry.attitude?.pitch || 0;
+            const yaw = telemetry.attitude?.yaw || 0;
+            document.getElementById('tel-roll').textContent = ((roll * 180 / Math.PI).toFixed(1)) + '°';
+            document.getElementById('tel-pitch').textContent = ((pitch * 180 / Math.PI).toFixed(1)) + '°';
+            document.getElementById('tel-yaw').textContent = ((yaw * 180 / Math.PI).toFixed(1)) + '°';
+            
+            document.getElementById('tel-groundspeed').innerHTML = `${(telemetry.velocity?.groundspeed || 0).toFixed(1)}<span class="telemetry-unit">m/s</span>`;
+            document.getElementById('tel-airspeed').innerHTML = `${(telemetry.velocity?.airspeed || 0).toFixed(1)}<span class="telemetry-unit">m/s</span>`;
+            document.getElementById('tel-vx').innerHTML = `${(telemetry.velocity?.vx || 0).toFixed(1)}<span class="telemetry-unit">m/s</span>`;
+            document.getElementById('tel-vy').innerHTML = `${(telemetry.velocity?.vy || 0).toFixed(1)}<span class="telemetry-unit">m/s</span>`;
+
+            // Power tab
+            const batteryLevel = telemetry.battery?.level || 0;
+            document.getElementById('tel-power-level').textContent = `${batteryLevel}%`;
+            document.getElementById('tel-voltage').innerHTML = `${(telemetry.battery?.voltage || 0).toFixed(2)}<span class="telemetry-unit">V</span>`;
+            document.getElementById('tel-current').innerHTML = `${(telemetry.battery?.current || 0).toFixed(2)}<span class="telemetry-unit">A</span>`;
+            
+            const power = (telemetry.battery?.voltage || 0) * (telemetry.battery?.current || 0);
+            document.getElementById('tel-power').innerHTML = `${power.toFixed(1)}<span class="telemetry-unit">W</span>`;
+            document.getElementById('tel-remaining').innerHTML = `${telemetry.battery?.remaining || batteryLevel}<span class="telemetry-unit">%</span>`;
+            
+            // Update battery bar
+            const batteryFill = document.getElementById('tel-battery-fill');
+            batteryFill.style.width = `${batteryLevel}%`;
+            batteryFill.textContent = `${batteryLevel}%`;
+            
+            if (batteryLevel > 70) {
+                batteryFill.className = 'battery-fill high';
+            } else if (batteryLevel > 30) {
+                batteryFill.className = 'battery-fill medium';
+            } else {
+                batteryFill.className = 'battery-fill low';
+            }
+
+            // System tab
+            document.getElementById('tel-sys-mode').textContent = telemetry.flight_mode || 'UNKNOWN';
+            document.getElementById('tel-sys-armed').innerHTML = telemetry.armed 
+                ? '<span class="status-badge armed">⚠️ ARMED</span>' 
+                : '<span class="status-badge disarmed">🔒 Disarmed</span>';
+            document.getElementById('tel-sys-status').textContent = telemetry.system_status || 'UNKNOWN';
+            document.getElementById('tel-sys-heading').textContent = `${telemetry.heading || 0}° ${getCompassDirection(telemetry.heading)}`;
+            
+            document.getElementById('tel-sys-ekf').innerHTML = telemetry.ekf_ok 
+                ? '<span class="status-badge connected">✓ OK</span>' 
+                : '<span class="status-badge disconnected">✗ Error</span>';
+            document.getElementById('tel-sys-gps-fix').textContent = getGPSFixType(telemetry.gps?.fix_type);
+            document.getElementById('tel-sys-connection').innerHTML = telemetry.connected
+                ? '<span class="status-badge connected">Connected</span>'
+                : '<span class="status-badge disconnected">Disconnected</span>';
+            
+            if (telemetry.timestamp) {
+                const date = new Date(telemetry.timestamp);
+                document.getElementById('tel-sys-timestamp').textContent = date.toLocaleTimeString();
+            }
+        }
+
+        function updateConnectionStatus_Telemetry(status) {
+            const statusDiv = document.getElementById('telemetryStatus');
+            let statusHTML = '';
+            
+            if (status.connected) {
+                if (status.simulation_mode) {
+                    statusHTML += '<span class="status-badge simulation">🔵 Simulation</span>';
+                } else {
+                    statusHTML += '<span class="status-badge connected">🟢 Connected</span>';
+                }
+            } else {
+                statusHTML += '<span class="status-badge disconnected">🔴 Disconnected</span>';
+            }
+            
+            statusDiv.innerHTML = statusHTML;
+        }
+
+        function getGPSFixType(fixType) {
+            const types = {
+                0: 'No Fix',
+                1: 'No Fix',
+                2: '2D Fix',
+                3: '3D Fix',
+                4: 'DGPS',
+                5: 'RTK Float',
+                6: 'RTK Fixed'
+            };
+            return types[fixType] || 'Unknown';
+        }
+
+        function getCompassDirection(heading) {
+            if (heading === null || heading === undefined) return '';
+            const directions = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+            const index = Math.round(heading / 45) % 8;
+            return `(${directions[index]})`;
+        }
+
+        function requestTelemetry() {
+            const piId = document.getElementById('telemetryPiSelect').value;
+            if (!piId) {
+                alert('Please select a Raspberry Pi');
+                return;
+            }
+
+            socket.emit('request_telemetry', { pi_id: piId });
+            addLog(`Requesting telemetry from ${piId}`, 'info');
+        }
+
+        function reconnectPixhawk() {
+            const piId = document.getElementById('telemetryPiSelect').value;
+            if (!piId) {
+                alert('Please select a Raspberry Pi');
+                return;
+            }
+
+            if (!confirm(`Reconnect Pixhawk on ${piId}?`)) {
+                return;
+            }
+
+            socket.emit('reconnect_pixhawk', { pi_id: piId });
+            addLog(`Reconnecting Pixhawk on ${piId}`, 'info');
+        }
+
+        // Waypoint functions
+        function markWaypoint() {
+            const piId = document.getElementById('controlPiSelect').value;
+            if (!piId) {
+                alert('Please select a Raspberry Pi');
+                return;
+            }
+
+            const name = prompt('Enter waypoint name (optional):');
+            
+            socket.emit('send_command', {
+                pi_id: piId,
+                command: 'mark_waypoint',
+                args: { name: name || '' }
+            });
+            
+            addLog(`Marking waypoint on ${piId}`, 'info');
+        }
+
+        function refreshWaypoints() {
+            socket.emit('request_waypoints');
+            addLog('Refreshing waypoints list', 'info');
+        }
+
+        function clearAllWaypoints() {
+            if (!confirm('Are you sure you want to delete all waypoints?')) {
+                return;
+            }
+
+            fetch('/api/waypoints', {
+                method: 'DELETE'
+            })
+            .then(res => res.json())
+            .then(data => {
+                addLog('All waypoints cleared', 'success');
+                refreshWaypoints();
+            })
+            .catch(err => {
+                addLog('Error clearing waypoints: ' + err.message, 'error');
+            });
+        }
+
+        function deleteWaypoint(waypointId) {
+            if (!confirm('Delete this waypoint?')) {
+                return;
+            }
+
+            fetch(`/api/waypoints/${waypointId}`, {
+                method: 'DELETE'
+            })
+            .then(res => res.json())
+            .then(data => {
+                addLog('Waypoint deleted', 'success');
+                refreshWaypoints();
+            })
+            .catch(err => {
+                addLog('Error deleting waypoint: ' + err.message, 'error');
+            });
+        }
+
+        function updateWaypointsList(waypoints) {
+            const container = document.getElementById('waypointsList');
+            
+            if (!waypoints || waypoints.length === 0) {
+                container.innerHTML = `
+                    <div style="text-align: center; padding: 20px; opacity: 0.6;">
+                        No waypoints marked yet
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = waypoints.slice().reverse().map(wp => {
+                const date = new Date(wp.datetime);
+                return `
+                    <div class="waypoint-item">
+                        <div class="waypoint-header">
+                            <span class="waypoint-id">
+                                📍 ${wp.name || wp.waypoint_id.substring(0, 15) + '...'}
+                            </span>
+                            <button class="waypoint-delete" onclick="deleteWaypoint('${wp.waypoint_id}')">
+                                🗑️ Delete
+                            </button>
+                        </div>
+                        <div class="waypoint-coords">
+                            <strong>Lat:</strong> ${wp.latitude.toFixed(6)}° | 
+                            <strong>Lon:</strong> ${wp.longitude.toFixed(6)}°
+                        </div>
+                        <div class="waypoint-coords">
+                            <strong>Alt:</strong> ${wp.altitude.toFixed(1)}m | 
+                            <strong>Mode:</strong> ${wp.flight_mode}
+                        </div>
+                        <div class="waypoint-time">
+                            ${date.toLocaleString()} | Pi: ${wp.pi_id}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Waypoint socket handlers
+        socket.on('waypoint_added', (data) => {
+            addLog(`Waypoint marked: (${data.waypoint.latitude.toFixed(6)}, ${data.waypoint.longitude.toFixed(6)})`, 'success');
+            refreshWaypoints();
+        });
+
+        socket.on('waypoints_list', (data) => {
+            updateWaypointsList(data.waypoints);
+        });
+
+        // Auto-refresh stats every 10 seconds
+        setInterval(() => {
+            const piId = document.getElementById('statsPiSelect').value;
+            if (piId) {
+                socket.emit('request_stats', { pi_id: piId });
+            }
+        }, 10000);
+
+        // Auto-refresh telemetry every 2 seconds
+        setInterval(() => {
+            const piId = document.getElementById('telemetryPiSelect').value;
+            if (piId) {
+                socket.emit('request_telemetry', { pi_id: piId });
+            }
+        }, 2000);
+
+        // ============ DRONE CONTROL FUNCTIONS ============
+        
+        function getDroneControlPi() {
+            const piId = document.getElementById('droneControlPiSelect').value;
+            if (!piId) {
+                alert('Please select a Raspberry Pi');
+                return null;
+            }
+            return piId;
+        }
+
+        function armDrone() {
+            const piId = getDroneControlPi();
+            if (!piId) return;
+            
+            const force = confirm('Force ARM? (Click Cancel for safety checks)');
+            
+            socket.emit('drone_arm', { pi_id: piId, force });
+            addLog(`ARM command sent to ${piId} (force=${force})`, 'info');
+        }
+
+        function disarmDrone() {
+            const piId = getDroneControlPi();
+            if (!piId) return;
+            
+            if (!confirm('Disarm the drone?')) return;
+            
+            const force = confirm('Force DISARM? (Click Cancel for normal disarm)');
+            
+            socket.emit('drone_disarm', { pi_id: piId, force });
+            addLog(`DISARM command sent to ${piId} (force=${force})`, 'info');
+        }
+
+        function setFlightMode(mode) {
+            const piId = getDroneControlPi();
+            if (!piId) return;
+            
+            socket.emit('drone_set_mode', { pi_id: piId, mode });
+            addLog(`Set flight mode to ${mode}`, 'info');
+        }
+
+        function takeoffDrone() {
+            const piId = getDroneControlPi();
+            if (!piId) return;
+            
+            // Check if drone is armed
+            const armedStatus = document.getElementById('tel-sys-armed')?.textContent;
+            if (armedStatus && armedStatus.includes('Disarmed')) {
+                if (!confirm('⚠️ Drone is not ARMED!\n\nYou must ARM the drone before takeoff.\n\nClick OK to ARM now, or Cancel to abort.')) {
+                    return;
+                }
+                // ARM the drone first
+                socket.emit('drone_arm', { pi_id: piId, force: false });
+                addLog('Auto-ARM: Arming drone before takeoff...', 'info');
+                // Wait a moment for ARM to complete
+                setTimeout(() => {
+                    proceedWithTakeoff(piId);
+                }, 3000);
+                return;
+            }
+            
+            proceedWithTakeoff(piId);
+        }
+        
+        function proceedWithTakeoff(piId) {
+            const altitude = prompt('Enter takeoff altitude (meters):', '10');
+            if (!altitude) return;
+            
+            const alt = parseFloat(altitude);
+            if (isNaN(alt) || alt < 2 || alt > 120) {
+                alert('Invalid altitude. Must be between 2 and 120 meters.');
+                return;
+            }
+            
+            if (!confirm(`Takeoff to ${alt} meters?`)) return;
+            
+            socket.emit('drone_takeoff', { pi_id: piId, altitude: alt, timeout: 60 });
+            addLog(`Takeoff command sent: ${alt}m`, 'info');
+        }
+
+        function landDrone() {
+            const piId = getDroneControlPi();
+            if (!piId) return;
+            
+            if (!confirm('Land the drone?')) return;
+            
+            socket.emit('drone_land', { pi_id: piId, timeout: 60 });
+            addLog('Land command sent', 'info');
+        }
+
+        function returnToLaunch() {
+            const piId = getDroneControlPi();
+            if (!piId) return;
+            
+            if (!confirm('Return to launch point?')) return;
+            
+            socket.emit('drone_rtl', { pi_id: piId });
+            addLog('RTL command sent', 'info');
+        }
+
+        function gotoLocation() {
+            const piId = getDroneControlPi();
+            if (!piId) return;
+            
+            const lat = parseFloat(document.getElementById('goto-lat').value);
+            const lon = parseFloat(document.getElementById('goto-lon').value);
+            const alt = parseFloat(document.getElementById('goto-alt').value);
+            const speed = parseFloat(document.getElementById('goto-speed').value);
+            
+            if (isNaN(lat) || isNaN(lon) || isNaN(alt) || isNaN(speed)) {
+                alert('Please fill in all navigation fields');
+                return;
+            }
+            
+            if (!confirm(`Go to: (${lat.toFixed(6)}, ${lon.toFixed(6)}) @ ${alt}m?`)) return;
+            
+            socket.emit('drone_goto', { 
+                pi_id: piId, 
+                latitude: lat, 
+                longitude: lon, 
+                altitude: alt,
+                groundspeed: speed,
+                timeout: 120
+            });
+            addLog(`Goto command sent: (${lat.toFixed(6)}, ${lon.toFixed(6)})`, 'info');
+        }
+
+        function useCurrentTelemetry() {
+            const lat = document.getElementById('tel-gps-lat').textContent;
+            const lon = document.getElementById('tel-gps-lon').textContent;
+            
+            if (lat !== '--' && lon !== '--') {
+                document.getElementById('goto-lat').value = parseFloat(lat);
+                document.getElementById('goto-lon').value = parseFloat(lon);
+                addLog('Current location copied to navigation fields', 'success');
+            } else {
+                alert('No telemetry data available');
+            }
+        }
+
+        function uploadMissionFromWaypoints() {
+            const piId = getDroneControlPi();
+            if (!piId) return;
+            
+            fetch('/api/waypoints')
+                .then(res => res.json())
+                .then(data => {
+                    if (!data.waypoints || data.waypoints.length === 0) {
+                        alert('No waypoints available. Mark some waypoints first.');
+                        return;
+                    }
+                    
+                    const takeoffAlt = parseFloat(document.getElementById('mission-takeoff-alt').value);
+                    
+                    const waypoints = data.waypoints.map((wp, index) => ({
+                        action: 'waypoint',
+                        latitude: wp.latitude,
+                        longitude: wp.longitude,
+                        altitude: wp.altitude
+                    }));
+                    
+                    // Add land action at the end
+                    waypoints.push({ action: 'land' });
+                    
+                    if (!confirm(`Upload mission with ${data.waypoints.length} waypoints?`)) return;
+                    
+                    socket.emit('drone_upload_mission', {
+                        pi_id: piId,
+                        waypoints: waypoints,
+                        takeoff_altitude: takeoffAlt
+                    });
+                    addLog(`Mission upload started: ${data.waypoints.length} waypoints`, 'info');
+                })
+                .catch(err => {
+                    addLog('Error loading waypoints: ' + err.message, 'error');
+                });
+        }
+
+        function startMission() {
+            const piId = getDroneControlPi();
+            if (!piId) return;
+            
+            if (!confirm('Start the uploaded mission?')) return;
+            
+            socket.emit('drone_start_mission', { pi_id: piId });
+            addLog('Mission start command sent', 'info');
+        }
+
+        function clearMission() {
+            const piId = getDroneControlPi();
+            if (!piId) return;
+            
+            if (!confirm('Clear the current mission?')) return;
+            
+            socket.emit('drone_clear_mission', { pi_id: piId });
+            addLog('Mission clear command sent', 'info');
+        }
+
+        function setGeofence() {
+            const piId = getDroneControlPi();
+            if (!piId) return;
+            
+            const lat = parseFloat(document.getElementById('tel-gps-lat').textContent);
+            const lon = parseFloat(document.getElementById('tel-gps-lon').textContent);
+            
+            if (isNaN(lat) || isNaN(lon)) {
+                alert('No GPS data available. Wait for telemetry or enter manually.');
+                return;
+            }
+            
+            const radius = prompt('Enter geofence radius (meters):', '500');
+            const maxAlt = prompt('Enter maximum altitude (meters):', '120');
+            const minAlt = prompt('Enter minimum altitude (meters):', '2');
+            
+            if (!radius || !maxAlt || !minAlt) return;
+            
+            socket.emit('safety_set_geofence', {
+                pi_id: piId,
+                home_lat: lat,
+                home_lon: lon,
+                radius: parseFloat(radius),
+                max_altitude: parseFloat(maxAlt),
+                min_altitude: parseFloat(minAlt)
+            });
+            addLog(`Geofence set: radius=${radius}m, alt=${minAlt}-${maxAlt}m`, 'info');
+        }
+
+        function preFlightCheck() {
+            const piId = getDroneControlPi();
+            if (!piId) return;
+            
+            socket.emit('safety_check_pre_flight', { pi_id: piId });
+            addLog('Pre-flight check requested', 'info');
+        }
+
+        function getSafetyStatus() {
+            const piId = getDroneControlPi();
+            if (!piId) return;
+            
+            socket.emit('safety_get_status', { pi_id: piId });
+            addLog('Safety status requested', 'info');
+        }
+
+        function emergencyStop() {
+            const piId = getDroneControlPi();
+            if (!piId) return;
+            
+            const confirmed = confirm('⚠️ EMERGENCY STOP - This will immediately disarm the drone!\n\nAre you sure?');
+            if (!confirmed) return;
+            
+            const doubleCheck = confirm('⚠️ FINAL CONFIRMATION - Emergency stop will be executed!');
+            if (!doubleCheck) return;
+            
+            socket.emit('drone_emergency_stop', { pi_id: piId });
+            addLog('🚨 EMERGENCY STOP ACTIVATED', 'error');
+        }
+
+        // ============ DETECTION CONTROL FUNCTIONS ============
+        
+        // Mission Management
+        let currentMissionId = null;
+        let missionActive = false;
+        
+        function startMission() {
+            const piId = getDroneControlPi();
+            if (!piId) return;
+            
+            const missionName = document.getElementById('mission-name-input').value || 'Yellow Crop Detection';
+            const altitude = parseFloat(document.getElementById('mission-altitude-input').value) || 15;
+            const speed = parseFloat(document.getElementById('mission-speed-input').value) || 2.0;
+            
+            socket.emit('start_mission', {
+                pi_id: piId,
+                mission_name: missionName,
+                altitude: altitude,
+                speed: speed,
+                field_size: 2  // acres
+            });
+            
+            addLog(`🚀 Starting mission: ${missionName}`, 'success');
+        }
+        
+        function stopMission() {
+            const piId = getDroneControlPi();
+            if (!piId) return;
+            
+            socket.emit('stop_mission', { pi_id: piId });
+            addLog('🏁 Stopping mission...', 'info');
+        }
+        
+        function updateMissionUI(active, missionId = null) {
+            missionActive = active;
+            currentMissionId = missionId;
+            
+            const statusEl = document.getElementById('mission-status');
+            const missionIdEl = document.getElementById('mission-id-display');
+            const currentIdEl = document.getElementById('current-mission-id');
+            const startBtn = document.getElementById('start-mission-btn');
+            const stopBtn = document.getElementById('stop-mission-btn');
+            
+            if (active && missionId) {
+                statusEl.textContent = 'ACTIVE';
+                statusEl.style.color = '#2e7d32';
+                currentIdEl.textContent = missionId;
+                missionIdEl.style.display = 'block';
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                
+                // Auto-start detection
+                startDetection();
+            } else {
+                statusEl.textContent = 'No Active Mission';
+                statusEl.style.color = '#d32f2f';
+                missionIdEl.style.display = 'none';
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+                
+                // Auto-stop detection
+                stopDetection();
+            }
+        }
+
+        function startDetection() {
+            const piId = getDroneControlPi();
+            if (!piId) return;
+            
+            if (!missionActive) {
+                addLog('⚠️ Please start a mission first before enabling detection', 'warning');
+                return;
+            }
+            
+            socket.emit('start_detection', { pi_id: piId });
+            addLog('🌾 Starting yellow crop detection...', 'info');
+        }
+
+        function stopDetection() {
+            const piId = getDroneControlPi();
+            if (!piId) return;
+            
+            socket.emit('stop_detection', { pi_id: piId });
+            addLog('🌾 Stopping detection...', 'info');
+        }
+
+        function refreshDetectionStats() {
+            const piId = getDroneControlPi();
+            if (!piId) return;
+            
+            socket.emit('get_detection_stats', { pi_id: piId });
+            addLog('Requesting detection statistics...', 'info');
+        }
+
+        function addDetectionToList(detection) {
+            const detectionList = document.getElementById('detection-list');
+            
+            // Clear "no detections" message on first detection
+            if (detectionList.querySelector('div[style*="text-align: center"]')) {
+                detectionList.innerHTML = '';
+            }
+            
+            const detectionCard = document.createElement('div');
+            detectionCard.style.cssText = 'background: white; padding: 10px; margin-bottom: 10px; border-radius: 5px; border-left: 4px solid #4CAF50;';
+            
+            const timestamp = new Date(detection.datetime || detection.timestamp * 1000).toLocaleString();
+            const gps = detection.latitude && detection.longitude 
+                ? `${detection.latitude.toFixed(6)}, ${detection.longitude.toFixed(6)}` 
+                : 'No GPS';
+            
+            detectionCard.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 8px;">
+                    <div>
+                        <strong style="color: #667eea;">${detection.detection_id}</strong>
+                        <div style="font-size: 0.8em; color: #666;">${timestamp}</div>
+                    </div>
+                    <span style="background: #4CAF50; color: white; padding: 3px 8px; border-radius: 12px; font-size: 0.8em;">
+                        ${(detection.confidence * 100).toFixed(0)}%
+                    </span>
+                </div>
+                <div style="font-size: 0.85em; margin-bottom: 5px;">
+                    📍 <strong>GPS:</strong> ${gps}<br>
+                    📏 <strong>Area:</strong> ${detection.detection_area?.toFixed(0) || 0} px<br>
+                    ✈️ <strong>Altitude:</strong> ${detection.altitude?.toFixed(1) || 0} m
+                </div>
+                ${detection.image_url ? `
+                    <img src="${detection.image_url}" 
+                         style="width: 100%; border-radius: 5px; margin-top: 8px; cursor: pointer;" 
+                         onclick="window.open('${detection.image_url}', '_blank')"
+                         alt="Detection Image">
+                ` : ''}
+            `;
+            
+            // Add to top of list
+            detectionList.insertBefore(detectionCard, detectionList.firstChild);
+            
+            // Keep only last 10 detections
+            while (detectionList.children.length > 10) {
+                detectionList.removeChild(detectionList.lastChild);
+            }
+        }
+
+        // Socket handlers for drone commands
+        socket.on('drone_command_result', (data) => {
+            const status = data.success ? 'success' : 'error';
+            const message = data.message || (data.success ? 'Command executed' : data.error);
+            addLog(`Drone: ${message}`, status);
+            
+            // Update drone status display
+            if (data.result && data.result.vehicle_state) {
+                updateDroneStatus(data.result.vehicle_state);
+            }
+        });
+
+        socket.on('safety_command_result', (data) => {
+            const status = data.success ? 'success' : 'error';
+            const message = data.message || (data.success ? 'Safety command executed' : data.error);
+            addLog(`Safety: ${message}`, status);
+            
+            if (data.result && data.result.checks) {
+                displayPreFlightResults(data.result.checks);
+            }
+        });
+
+        socket.on('safety_status', (data) => {
+            if (data.status) {
+                displaySafetyStatus(data.status);
+            }
+        });
+
+        // ============ DETECTION SOCKET LISTENERS ============
+
+        socket.on('crop_detection', (data) => {
+            console.log('🌾 Crop detection received:', data);
+            
+            // Show notification
+            addLog(`🌾 Yellow crop detected! Confidence: ${(data.confidence * 100).toFixed(0)}%`, 'success');
+            
+            // Add to detection list
+            addDetectionToList(data);
+            
+            // Update detection count
+            const currentCount = parseInt(document.getElementById('det-total').textContent) || 0;
+            document.getElementById('det-total').textContent = currentCount + 1;
+        });
+
+        socket.on('detection_status', (data) => {
+            console.log('Detection status:', data);
+            
+            const statusElement = document.getElementById('detection-status');
+            if (data.status === 'active') {
+                statusElement.textContent = '🟢 Active';
+                statusElement.style.color = '#4CAF50';
+                addLog('✅ Detection started successfully', 'success');
+            } else if (data.status === 'inactive') {
+                statusElement.textContent = '🔴 Inactive';
+                statusElement.style.color = '#f44336';
+                addLog('Detection stopped', 'info');
+            } else {
+                statusElement.textContent = `⚠️ ${data.message || 'Unknown'}`;
+                statusElement.style.color = '#ff9800';
+                addLog(`Detection: ${data.message}`, 'warning');
+            }
+        });
+
+        socket.on('detection_stats', (data) => {
+            console.log('Detection stats:', data);
+            
+            if (data.stats) {
+                const stats = data.stats;
+                
+                // Update stats display
+                document.getElementById('det-total').textContent = stats.detection_count || stats.total_detections || 0;
+                document.getElementById('det-frames').textContent = stats.frames_processed || 0;
+                
+                // Calculate average confidence
+                const avgConf = stats.avg_confidence || 
+                              (stats.total_detections > 0 ? 75 : 0); // Default estimate
+                document.getElementById('det-confidence').textContent = avgConf.toFixed(0) + '%';
+                
+                // Calculate detection rate (detections per minute estimate)
+                const rate = stats.avg_detections_per_frame 
+                    ? (stats.avg_detections_per_frame * 30 * 60).toFixed(1) // 30 fps assumption
+                    : '0.0';
+                document.getElementById('det-rate').textContent = rate + '/min';
+                
+                addLog('Detection statistics updated', 'info');
+            }
+        });
+        
+        // Mission Events
+        socket.on('mission_started', (data) => {
+            console.log('Mission started:', data);
+            updateMissionUI(true, data.mission_id);
+            addLog(`🚀 Mission started: ${data.mission_id}`, 'success');
+            
+            // Reset detection counter
+            document.getElementById('det-total').textContent = '0';
+            document.getElementById('periodic-count').textContent = '0';
+            document.getElementById('detection-list').innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">No detections yet</div>';
+        });
+        
+        socket.on('mission_stopped', (data) => {
+            console.log('Mission stopped:', data);
+            updateMissionUI(false);
+            addLog(`🏁 Mission completed: ${data.total_detections} detections in ${data.duration_minutes} min`, 'success');
+        });
+        
+        // Periodic image capture events
+        socket.on('periodic_image_received', (data) => {
+            document.getElementById('periodic-count').textContent = data.count;
+        });
+
+        function updateDroneStatus(state) {
+            document.getElementById('drone-armed-status').textContent = state.armed ? '🔓 ARMED' : '🔒 DISARMED';
+            document.getElementById('drone-armed-status').style.color = state.armed ? '#4CAF50' : '#f44336';
+            document.getElementById('drone-mode-status').textContent = state.mode || '--';
+            if (state.battery_percent !== undefined) {
+                document.getElementById('drone-battery-status').textContent = state.battery_percent.toFixed(0) + '%';
+                document.getElementById('drone-battery-status').style.color = 
+                    state.battery_percent > 50 ? '#4CAF50' : 
+                    state.battery_percent > 20 ? '#ff9800' : '#f44336';
+            }
+        }
+
+        function displayPreFlightResults(checks) {
+            let message = '✅ Pre-Flight Check Results:\n\n';
+            for (const [key, value] of Object.entries(checks)) {
+                const icon = value.passed ? '✅' : '❌';
+                message += `${icon} ${key}: ${value.message}\n`;
+            }
+            alert(message);
+        }
+
+        function displaySafetyStatus(status) {
+            let message = '🛡️ Safety Status:\n\n';
+            message += `Monitoring: ${status.monitoring ? 'Active' : 'Inactive'}\n`;
+            message += `Geofence: ${status.geofence_enabled ? 'Enabled' : 'Disabled'}\n`;
+            if (status.geofence_enabled) {
+                message += `  Radius: ${status.geofence_radius}m\n`;
+                message += `  Altitude: ${status.min_altitude}-${status.max_altitude}m\n`;
+            }
+            message += `\nLast Check: ${status.last_check_time}\n`;
+            message += `Issues: ${status.violations || 'None'}`;
+            alert(message);
+        }
+
+        // Update drone status from telemetry
+        socket.on('drone_telemetry_update', (data) => {
+            const tel = data.telemetry;
+            updateDroneStatus({
+                armed: tel.armed,
+                mode: tel.flight_mode,
+                battery_percent: tel.battery?.level
+            });
+        });
+
+        // Request Pi list and waypoints on page load
+        window.addEventListener('load', () => {
+            socket.emit('request_pi_list');
+            socket.emit('request_waypoints');
+        });
+    </script>
+</body>
+</html>

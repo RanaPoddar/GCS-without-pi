@@ -1,0 +1,1377 @@
+// Mission Control Dashboard
+class MissionControl {
+    constructor() {
+        this.map = null;
+        this.socket = null;
+        this.missionData = null;
+        this.boundaryLayer = null;
+        this.gridLayer = null;
+        this.drone1Marker = null;
+        this.drone2Marker = null;
+        this.drone1Path = [];
+        this.drone2Path = [];
+        this.drone1PathLine = null;
+        this.drone2PathLine = null;
+        this.gcsMarker = null;
+        this.gcsLocation = null;
+        this.detectionMarkers = [];
+        this.missionStartTime = null;
+        this.missionInterval = null;
+        this.hasReceivedTelemetry = false;
+        this.activeMission = null;
+        this.missionProgressInterval = null;
+        this.currentWaypointMarker = null;
+        this.waypointPreviewLayer = null;
+        
+        this.init();
+    }
+    
+    init() {
+        this.initMap();
+        this.initSocket();
+        this.initEventListeners();
+        this.initGCSLocation();
+        
+        // Initialize drone connection status as disconnected
+        this.updateDroneConnectionStatus(1, false);
+        this.updateDroneConnectionStatus(2, false);
+        
+        this.addAlert('System initialized', 'info');
+    }
+    
+    // Map Initialization
+    initMap() {
+        this.map = L.map('map', {
+            zoomControl: true,
+            attributionControl: true,
+            maxZoom: 22
+        }).setView([0, 0], 2);
+        
+        // Use Google Satellite tiles (most reliable for high zoom)
+        L.tileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+            maxZoom: 22,
+            minZoom: 1,
+            attribution: '&copy; Google'
+        }).addTo(this.map);
+        
+        // Add labels overlay
+        L.tileLayer('https://mt1.google.com/vt/lyrs=h&x={x}&y={y}&z={z}', {
+            maxZoom: 22,
+            minZoom: 1,
+            opacity: 1.0,
+            attribution: '&copy; Google'
+        }).addTo(this.map);
+        
+        // Initialize layer groups
+        this.boundaryLayer = L.layerGroup().addTo(this.map);
+        this.gridLayer = L.layerGroup().addTo(this.map);
+        
+        // Custom drone icons
+        this.drone1Icon = L.divIcon({
+            className: 'drone-marker',
+            html: '<div style="font-size: 24px; text-shadow: 0 0 10px rgba(14, 165, 233, 0.8);">🛸</div>',
+            iconSize: [30, 30],
+            iconAnchor: [15, 15]
+        });
+        
+        this.drone2Icon = L.divIcon({
+            className: 'drone-marker',
+            html: '<div style="font-size: 24px; text-shadow: 0 0 10px rgba(34, 197, 94, 0.8);">🛸</div>',
+            iconSize: [30, 30],
+            iconAnchor: [15, 15]
+        });
+        
+        // GCS icon
+        this.gcsIcon = L.divIcon({
+            className: 'gcs-marker',
+            html: '<div style="font-size: 28px; text-shadow: 0 0 10px rgba(234, 179, 8, 0.8);">🎮</div>',
+            iconSize: [35, 35],
+            iconAnchor: [17, 17]
+        });
+        
+        // Drone markers
+        this.drone1Marker = L.marker([0, 0], { 
+            icon: this.drone1Icon,
+            opacity: 0 
+        }).addTo(this.map)
+        .bindPopup('<b>Drone 1</b><br>Waiting for telemetry...');
+        
+        this.drone2Marker = L.marker([0, 0], { 
+            icon: this.drone2Icon,
+            opacity: 0 
+        }).addTo(this.map)
+        .bindPopup('<b>Drone 2</b><br>Waiting for telemetry...');
+        
+        // GCS marker (will be positioned when first telemetry is received)
+        this.gcsMarker = L.marker([0, 0], {
+            icon: this.gcsIcon,
+            opacity: 0
+        }).addTo(this.map)
+        .bindPopup('<b>Ground Control Station</b><br>Dashboard Location');
+        
+        // Path lines
+        this.drone1PathLine = L.polyline([], {
+            color: '#0ea5e9',
+            weight: 2,
+            opacity: 0.7
+        }).addTo(this.map);
+        
+        this.drone2PathLine = L.polyline([], {
+            color: '#22c55e',
+            weight: 2,
+            opacity: 0.7
+        }).addTo(this.map);
+        
+        console.log('Map initialized');
+    }
+    
+    // GCS Location Initialization
+    initGCSLocation() {
+        // Try to get browser geolocation
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    const accuracy = position.coords.accuracy;
+                    const lat = position.coords.latitude;
+                    const lon = position.coords.longitude;
+                    
+                    // Only accept location if accuracy is reasonable (< 100m)
+                    if (accuracy < 100) {
+                        this.gcsLocation = [lat, lon];
+                        this.gcsMarker.setLatLng(this.gcsLocation);
+                        this.gcsMarker.setOpacity(1);
+                        console.log(`GCS location set: [${lat.toFixed(6)}, ${lon.toFixed(6)}] (±${accuracy.toFixed(0)}m)`);
+                        this.addAlert(`GCS location acquired (±${accuracy.toFixed(0)}m)`, 'success');
+                        
+                        // Update popup with accuracy
+                        this.gcsMarker.setPopupContent(
+                            `<b>Ground Control Station</b><br>` +
+                            `Lat: ${lat.toFixed(6)}<br>` +
+                            `Lon: ${lon.toFixed(6)}<br>` +
+                            `Accuracy: ±${accuracy.toFixed(0)}m`
+                        );
+                        
+                        // Center on GCS if no telemetry yet
+                        if (!this.hasReceivedTelemetry) {
+                            this.map.setView(this.gcsLocation, 15);
+                        }
+                    } else {
+                        console.warn(`GCS location accuracy poor (±${accuracy.toFixed(0)}m), waiting for better fix...`);
+                        this.addAlert(`GCS location accuracy poor (±${accuracy.toFixed(0)}m), retrying...`, 'warning');
+                    }
+                },
+                (error) => {
+                    console.warn('Could not get GCS location:', error.message);
+                    this.addAlert('GCS location unavailable - geolocation disabled', 'warning');
+                },
+                {
+                    enableHighAccuracy: true,
+                    timeout: 10000,
+                    maximumAge: 30000
+                }
+            );
+            
+            // Watch position for updates
+            navigator.geolocation.watchPosition(
+                (position) => {
+                    const accuracy = position.coords.accuracy;
+                    const lat = position.coords.latitude;
+                    const lon = position.coords.longitude;
+                    
+                    // Only update if accuracy is good (< 50m for updates)
+                    if (accuracy < 50) {
+                        this.gcsLocation = [lat, lon];
+                        this.gcsMarker.setLatLng(this.gcsLocation);
+                        this.gcsMarker.setOpacity(1);
+                        this.gcsMarker.setPopupContent(
+                            `<b>Ground Control Station</b><br>` +
+                            `Lat: ${lat.toFixed(6)}<br>` +
+                            `Lon: ${lon.toFixed(6)}<br>` +
+                            `Accuracy: ±${accuracy.toFixed(0)}m`
+                        );
+                        console.log(`GCS location updated: [${lat.toFixed(6)}, ${lon.toFixed(6)}] (±${accuracy.toFixed(0)}m)`);
+                    }
+                },
+                null,
+                {
+                    enableHighAccuracy: true,
+                    timeout: 15000,
+                    maximumAge: 60000
+                }
+            );
+        } else {
+            console.warn('Geolocation not supported by browser');
+            this.addAlert('GCS location unavailable - browser not supported', 'warning');
+        }
+    }
+    
+    // Socket.IO Initialization
+    initSocket() {
+        this.socket = io();
+        
+        this.socket.on('connect', () => {
+            console.log('Connected to server');
+            this.updateConnectionStatus(true);
+            this.addAlert('Connected to server', 'success');
+        });
+        
+        this.socket.on('disconnect', () => {
+            console.log('Disconnected from server');
+            this.updateConnectionStatus(false);
+            this.addAlert('Disconnected from server', 'error');
+        });
+
+        // Drone connection status updates
+        this.socket.on('drone_connected', (data) => {
+            console.log(`Drone ${data.drone_id} connected`);
+            this.updateDroneConnectionStatus(data.drone_id, true);
+            this.addAlert(`Drone ${data.drone_id} connected`, 'success');
+        });
+
+        this.socket.on('drone_disconnected', (data) => {
+            console.log(`Drone ${data.drone_id} disconnected`);
+            this.updateDroneConnectionStatus(data.drone_id, false);
+            this.addAlert(`Drone ${data.drone_id} disconnected`, 'warning');
+        });
+
+        // Reconnect button handlers
+        document.getElementById('reconnectDrone1').addEventListener('click', () => {
+            this.reconnectDrone(1);
+        });
+        
+        document.getElementById('reconnectDrone2').addEventListener('click', () => {
+            this.reconnectDrone(2);
+        });
+        
+        // Telemetry updates
+        // Drone telemetry updates
+        this.socket.on('drone_telemetry_update', (data) => {
+            this.handleTelemetryUpdate(data);
+        });
+        
+        // Drone status updates
+        this.socket.on('drones_status', (data) => {
+            this.handleDronesStatus(data);
+        });
+        
+        // Drone connected/disconnected
+        this.socket.on('drone_connected', (data) => {
+            this.addAlert(`Drone ${data.drone_id} connected`, 'success');
+        });
+        
+        this.socket.on('drone_disconnected', (data) => {
+            this.addAlert(`Drone ${data.drone_id} disconnected`, 'error');
+        });
+        
+        // Detection updates
+        this.socket.on('detection', (data) => {
+            this.handleDetection(data);
+        });
+        
+        // Mission status updates
+        this.socket.on('mission_status', (data) => {
+            this.handleMissionStatus(data);
+        });
+    }
+    
+    // Event Listeners
+    initEventListeners() {
+        // KML Upload
+        const uploadZone = document.getElementById('uploadZone');
+        const fileInput = document.getElementById('kmlFileInput');
+        
+        uploadZone.addEventListener('click', () => fileInput.click());
+        
+        uploadZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadZone.classList.add('drag-over');
+        });
+        
+        uploadZone.addEventListener('dragleave', () => {
+            uploadZone.classList.remove('drag-over');
+        });
+        
+        uploadZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadZone.classList.remove('drag-over');
+            const file = e.dataTransfer.files[0];
+            if (file) this.handleKMLUpload(file);
+        });
+        
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) this.handleKMLUpload(file);
+        });
+        
+        // Generate Grid
+        document.getElementById('generateGrid').addEventListener('click', () => {
+            this.generateSurveyGrid();
+        });
+        
+        // Mission Control Buttons
+        document.getElementById('startMission').addEventListener('click', () => {
+            this.startMission();
+        });
+        
+        document.getElementById('pauseMission').addEventListener('click', () => {
+            this.pauseMission();
+        });
+        
+        document.getElementById('stopMission').addEventListener('click', () => {
+            this.stopMission();
+        });
+        
+        document.getElementById('returnToHome').addEventListener('click', () => {
+            this.returnToHome();
+        });
+        
+        // Map Controls
+        document.getElementById('centerMap').addEventListener('click', () => {
+            this.centerOnDrones();
+        });
+        
+        document.getElementById('toggleLayers').addEventListener('click', () => {
+            document.getElementById('layerPanel').classList.toggle('hidden');
+        });
+        
+        document.getElementById('clearMission').addEventListener('click', () => {
+            this.clearMission();
+        });
+        
+        // Layer Toggles
+        document.getElementById('showBoundary').addEventListener('change', (e) => {
+            if (e.target.checked) {
+                this.map.addLayer(this.boundaryLayer);
+            } else {
+                this.map.removeLayer(this.boundaryLayer);
+            }
+        });
+        
+        document.getElementById('showGrid').addEventListener('change', (e) => {
+            if (e.target.checked) {
+                this.map.addLayer(this.gridLayer);
+            } else {
+                this.map.removeLayer(this.gridLayer);
+            }
+        });
+        
+        document.getElementById('showDronePaths').addEventListener('change', (e) => {
+            if (e.target.checked) {
+                this.drone1PathLine.addTo(this.map);
+                this.drone2PathLine.addTo(this.map);
+            } else {
+                this.map.removeLayer(this.drone1PathLine);
+                this.map.removeLayer(this.drone2PathLine);
+            }
+        });
+    }
+    
+    // KML Upload Handler
+    async handleKMLUpload(file) {
+        try {
+            this.addAlert(`Uploading ${file.name}...`, 'info');
+            
+            // Create FormData to upload file to server
+            const formData = new FormData();
+            formData.append('kml', file);
+            formData.append('altitude', document.getElementById('altitude').value);
+            formData.append('speed', document.getElementById('speed').value);
+            formData.append('pi_id', 'mission_control');
+            
+            // Upload to server for storage
+            const uploadResponse = await fetch('/api/mission/upload_kml', {
+                method: 'POST',
+                body: formData
+            });
+            
+            if (!uploadResponse.ok) {
+                throw new Error('Failed to upload KML to server');
+            }
+            
+            const uploadData = await uploadResponse.json();
+            console.log('KML uploaded to server:', uploadData);
+            
+            // Store server mission ID for later use
+            const serverMissionId = uploadData.mission_id;
+            
+            // Now parse for display
+            const text = await file.text();
+            const parser = new DOMParser();
+            const kml = parser.parseFromString(text, 'text/xml');
+            
+            // Parse KML to GeoJSON
+            const geojson = toGeoJSON.kml(kml);
+            
+            // Extract boundary
+            if (geojson.features && geojson.features.length > 0) {
+                const feature = geojson.features[0];
+                
+                // Clear existing boundary
+                this.boundaryLayer.clearLayers();
+                
+                // Add to map
+                const layer = L.geoJSON(feature, {
+                    style: {
+                        color: '#ffff00',
+                        weight: 3,
+                        fillColor: '#ffff00',
+                        fillOpacity: 0.15
+                    }
+                }).addTo(this.boundaryLayer);
+                
+                this.map.fitBounds(layer.getBounds());
+                
+                // Store mission data
+                this.missionData = {
+                    fileName: file.name,
+                    boundary: feature,
+                    geojson: geojson,
+                    serverMissionId: serverMissionId
+                };
+                
+                // Update UI
+                document.getElementById('fileName').textContent = file.name;
+                document.getElementById('waypointCount').textContent = 
+                    this.countCoordinates(feature);
+                document.getElementById('missionArea').textContent = 
+                    this.calculateArea(feature).toFixed(2) + ' ha';
+                document.getElementById('missionInfo').classList.remove('hidden');
+                
+                this.addAlert(`KML loaded: ${file.name}`, 'success');
+                this.updateMissionStatus('ready');
+                document.getElementById('generateGrid').disabled = false;
+            }
+        } catch (error) {
+            console.error('KML upload error:', error);
+            this.addAlert('Failed to load KML file', 'error');
+        }
+    }
+    
+    // Generate Survey Grid - using server-generated waypoints
+    async generateSurveyGrid() {
+        if (!this.missionData) {
+            this.addAlert('Please upload a KML file first', 'warning');
+            return;
+        }
+        
+        if (!this.missionData.serverMissionId) {
+            this.addAlert('No mission ID from server. Please re-upload KML.', 'warning');
+            return;
+        }
+        
+        try {
+            this.addAlert('Fetching survey grid from server...', 'info');
+            // Clear existing grid
+            this.gridLayer.clearLayers();
+            // Fetch the mission data with waypoints from server
+            const response = await fetch(`/api/mission/${this.missionData.serverMissionId}`);
+            if (!response.ok) {
+                throw new Error('Failed to fetch mission from server');
+            }
+            const missionData = await response.json();
+            console.log('Mission data from server:', missionData);
+            // Defensive: log keys and structure
+            if (!missionData) throw new Error('No data from server');
+            const mission = missionData.mission_data || missionData.mission;
+            if (!mission) throw new Error('No mission object in response');
+            if (!Array.isArray(mission.waypoints)) {
+                console.error('Waypoints missing or not array:', mission.waypoints);
+                throw new Error('No waypoints array in mission data');
+            }
+            if (mission.waypoints.length === 0) {
+                throw new Error('Waypoints array is empty');
+            }
+            // Check for lat/lon in first waypoint
+            if (!('lat' in mission.waypoints[0]) || !('lon' in mission.waypoints[0])) {
+                console.error('First waypoint:', mission.waypoints[0]);
+                throw new Error('Waypoints missing lat/lon properties');
+            }
+            const waypoints = mission.waypoints;
+            // Draw waypoints as connected path (survey grid)
+            const waypointCoords = waypoints.map(wp => [wp.lat, wp.lon]);
+            L.polyline(waypointCoords, {
+                color: '#00ff00',
+                weight: 3,
+                opacity: 0.8
+            }).addTo(this.gridLayer);
+            // Add waypoint markers
+            waypoints.forEach((wp, i) => {
+                let color = '#00ff00';
+                let radius = 4;
+                if (i === 0) { color = '#00ff00'; radius = 8; }
+                else if (i === waypoints.length - 1) { color = '#ff0000'; radius = 8; }
+                L.circleMarker([wp.lat, wp.lon], {
+                    radius: radius,
+                    fillColor: color,
+                    color: '#fff',
+                    weight: 2,
+                    fillOpacity: 1
+                }).addTo(this.gridLayer).bindPopup(`WP ${wp.seq}: ${wp.alt}m`);
+            });
+            // Update mission stats
+            const stats = mission.mission_stats || {};
+            document.getElementById('waypointCount').textContent = waypoints.length;
+            document.getElementById('estTime').textContent = this.formatTime(stats.estimated_time_minutes * 60 || 0);
+            // Store waypoints in mission data
+            this.missionData.waypoints = waypoints;
+            this.missionData.stats = stats;
+            
+            // Draw preview with waypoint markers
+            this.drawWaypointPreview(waypoints);
+            
+            this.addAlert(`Survey grid loaded: ${waypoints.length} waypoints`, 'success');
+            document.getElementById('startMission').disabled = false;
+        } catch (error) {
+            console.error('Grid generation error:', error);
+            this.addAlert('Failed to generate survey grid: ' + error.message, 'error');
+        }
+    }
+    
+    // Mission Control Functions - Now with automated execution
+    async startMission() {
+        // Use automated mission execution instead of manual control
+        await this.startAutomatedMission();
+    }
+    
+    async pauseMission() {
+        const pauseBtn = document.getElementById('pauseMission');
+        if (pauseBtn.textContent.includes('Resume')) {
+            await this.resumeAutomatedMission();
+        } else {
+            await this.pauseAutomatedMission();
+        }
+    }
+    
+    async stopMission() {
+        await this.stopAutomatedMission();
+    }
+    
+    pauseMission() {
+        this.addAlert('Pausing mission...', 'warning');
+        this.socket.emit('pause_mission');
+        this.updateMissionStatus('warning');
+    }
+    
+    stopMission() {
+        this.addAlert('Stopping mission...', 'warning');
+        this.updateMissionStatus('idle');
+        
+        // Reset buttons
+        document.getElementById('startMission').disabled = false;
+        document.getElementById('pauseMission').disabled = true;
+        document.getElementById('stopMission').disabled = true;
+        document.getElementById('returnToHome').disabled = true;
+        
+        // Stop timer
+        if (this.missionInterval) {
+            clearInterval(this.missionInterval);
+            this.missionInterval = null;
+        }
+        
+        this.socket.emit('stop_mission');
+        this.addAlert('Mission stopped', 'info');
+    }
+    
+    returnToHome() {
+        this.addAlert('Return to home initiated', 'info');
+        this.socket.emit('return_to_home');
+    }
+    
+    // Telemetry Update Handler
+    handleTelemetryUpdate(data) {
+        const telemetry = data.telemetry || {};
+        const droneId = data.drone_id || 1;
+        const prefix = `drone${droneId}`;
+        
+        // Update connection status when telemetry is received
+        this.updateDroneConnectionStatus(droneId, true);
+        
+        // Extract GPS coordinates
+        const latitude = telemetry.gps?.lat;
+        const longitude = telemetry.gps?.lon;
+        const altitude = telemetry.altitude || 0;
+        const heading = telemetry.heading || 0;
+        const groundspeed = telemetry.groundspeed || 0;
+        const flightMode = telemetry.flight_mode || 'UNKNOWN';
+        const armed = telemetry.armed || false;
+        const batteryVoltage = telemetry.battery?.voltage || 0;
+        const batteryPercent = telemetry.battery?.remaining || 100;
+        const satellites = telemetry.gps?.satellites_visible || 0;
+        const gpsFixType = telemetry.gps?.fix_type || 0;
+        
+        // Update position
+        if (latitude && longitude) {
+            const pos = [latitude, longitude];
+            
+            // Update marker
+            const marker = droneId === 1 ? this.drone1Marker : this.drone2Marker;
+            marker.setLatLng(pos);
+            marker.setOpacity(1);
+            
+            // Update marker popup with current info
+            marker.setPopupContent(`
+                <b>Drone ${droneId}</b><br>
+                ${armed ? '🚁 <span style="color: #22c55e;">ARMED</span>' : '🔒 DISARMED'}<br>
+                Mode: ${flightMode}<br>
+                Lat: ${latitude.toFixed(6)}<br>
+                Lon: ${longitude.toFixed(6)}<br>
+                Alt: ${altitude.toFixed(1)}m<br>
+                Speed: ${groundspeed.toFixed(1)}m/s<br>
+                Battery: ${batteryPercent}%<br>
+                Satellites: ${satellites}
+            `);
+            
+            // Update path
+            const path = droneId === 1 ? this.drone1Path : this.drone2Path;
+            path.push(pos);
+            
+            // Limit path length
+            if (path.length > 1000) path.shift();
+            
+            // Update path line
+            const pathLine = droneId === 1 ? this.drone1PathLine : this.drone2PathLine;
+            pathLine.setLatLngs(path);
+            
+            // Auto-center on first telemetry
+            if (!this.hasReceivedTelemetry) {
+                this.centerOnDrones();
+                this.hasReceivedTelemetry = true;
+            }
+            
+            // Update UI
+            document.getElementById(`${prefix}Lat`).textContent = latitude.toFixed(6);
+            document.getElementById(`${prefix}Lon`).textContent = longitude.toFixed(6);
+        }
+        
+        // Update altitude
+        const altText = altitude.toFixed(1) + 'm';
+        document.getElementById(`${prefix}Alt`).textContent = altText;
+        document.getElementById(`${prefix}AltHud`).textContent = altText;
+        
+        // Update heading
+        document.getElementById(`${prefix}Heading`).textContent = heading.toFixed(0) + '°';
+        
+        // Update speed
+        const spdText = groundspeed.toFixed(1) + 'm/s';
+        document.getElementById(`${prefix}Speed`).textContent = spdText;
+        document.getElementById(`${prefix}SpdHud`).textContent = spdText;
+        
+        // Update battery
+        document.getElementById(`${prefix}Battery`).style.width = batteryPercent + '%';
+        document.getElementById(`${prefix}BatteryText`).textContent = batteryPercent + '%';
+        document.getElementById(`${prefix}BatHud`).textContent = batteryPercent + '%';
+        document.getElementById(`${prefix}VoltHud`).textContent = batteryVoltage.toFixed(2) + 'V';
+        
+        // Update GPS
+        const gpsStatus = this.getGPSStatus(gpsFixType);
+        document.getElementById(`${prefix}Gps`).textContent = `${gpsStatus} (${satellites})`;
+        
+        // Update mode
+        document.getElementById(`${prefix}Mode`).textContent = flightMode;
+        
+        // Update armed status
+        const armedBadge = document.getElementById(`${prefix}Armed`);
+        if (armed) {
+            armedBadge.textContent = 'ARMED';
+            armedBadge.classList.remove('badge-offline');
+            armedBadge.classList.add('badge-online');
+        } else {
+            armedBadge.textContent = 'DISARMED';
+            armedBadge.classList.remove('badge-online');
+            armedBadge.classList.add('badge-offline');
+        }
+        
+        // Update status
+        const statusBadge = document.getElementById(`${prefix}Status`);
+        statusBadge.textContent = 'ONLINE';
+        statusBadge.classList.remove('badge-offline');
+        statusBadge.classList.add('badge-online');
+    }
+    
+    // Handle drones status
+    handleDronesStatus(data) {
+        if (data.drones && Array.isArray(data.drones)) {
+            data.drones.forEach(drone => {
+                // Update connection status for each drone
+                this.updateDroneConnectionStatus(drone.drone_id, drone.connected);
+                
+                // Update telemetry if available
+                if (drone.telemetry) {
+                    this.handleTelemetryUpdate(drone);
+                }
+            });
+        }
+    }
+    
+    // Detection Handler
+    handleDetection(data) {
+        if (data.latitude && data.longitude) {
+            const marker = L.circleMarker([data.latitude, data.longitude], {
+                radius: 6,
+                fillColor: '#ef4444',
+                color: '#fff',
+                weight: 2,
+                opacity: 1,
+                fillOpacity: 0.8
+            }).addTo(this.map);
+            
+            marker.bindPopup(`
+                <div style="color: #fff;">
+                    <strong>Detection</strong><br>
+                    Confidence: ${(data.confidence * 100).toFixed(1)}%<br>
+                    Time: ${new Date(data.timestamp).toLocaleTimeString()}
+                </div>
+            `);
+            
+            this.detectionMarkers.push(marker);
+            
+            // Update detection count
+            const droneId = data.drone_id || 1;
+            const countEl = document.getElementById(`drone${droneId}Detections`);
+            const currentCount = parseInt(countEl.textContent) || 0;
+            countEl.textContent = currentCount + 1;
+            
+            this.addAlert(`Detection by Drone ${droneId}`, 'warning');
+        }
+    }
+    
+    // Mission Status Handler
+    handleMissionStatus(data) {
+        if (data.progress !== undefined) {
+            document.getElementById('progressFill').style.width = data.progress + '%';
+            document.getElementById('progressPercent').textContent = 
+                data.progress.toFixed(1) + '%';
+        }
+    }
+    
+    // UI Helper Functions
+    updateConnectionStatus(connected) {
+        const indicator = document.querySelector('.connection-indicator');
+        const text = document.querySelector('.connection-status span:last-child');
+        
+        if (connected) {
+            indicator.classList.add('online');
+            indicator.classList.remove('offline');
+            text.textContent = 'Server: Connected';
+        } else {
+            indicator.classList.remove('online');
+            indicator.classList.add('offline');
+            text.textContent = 'Server: Disconnected';
+        }
+    }
+
+    updateDroneConnectionStatus(droneId, connected) {
+        const indicator = document.getElementById(`drone${droneId}StatusIndicator`);
+        const text = document.getElementById(`drone${droneId}StatusText`);
+        
+        if (connected) {
+            indicator.classList.remove('disconnected');
+            indicator.classList.add('connected');
+            text.textContent = 'Connected';
+            text.style.color = '#48bb78';
+        } else {
+            indicator.classList.remove('connected');
+            indicator.classList.add('disconnected');
+            text.textContent = 'Disconnected';
+            text.style.color = '#fc8181';
+        }
+    }
+
+    reconnectDrone(droneId) {
+        console.log(`Attempting to reconnect Drone ${droneId}...`);
+        const btn = document.getElementById(`reconnectDrone${droneId}`);
+        btn.disabled = true;
+        btn.textContent = '⟳';
+        
+        this.socket.emit('drone_reconnect', { drone_id: droneId });
+        
+        this.addAlert(`Reconnecting Drone ${droneId}...`, 'info');
+        
+        // Re-enable button after 3 seconds
+        setTimeout(() => {
+            btn.disabled = false;
+            btn.textContent = '⟲';
+        }, 3000);
+    }
+    
+    updateMissionStatus(status) {
+        const statusEl = document.getElementById('missionStatus');
+        const indicator = statusEl.querySelector('.status-indicator');
+        const text = statusEl.querySelector('.status-text');
+        
+        indicator.className = 'status-indicator status-' + status;
+        text.textContent = status.toUpperCase();
+    }
+    
+    updateMissionTimer() {
+        if (!this.missionStartTime) return;
+        
+        const elapsed = Math.floor((Date.now() - this.missionStartTime) / 1000);
+        document.getElementById('elapsedTime').textContent = this.formatTime(elapsed);
+    }
+    
+    addAlert(message, type = 'info') {
+        const container = document.getElementById('alertsContainer');
+        
+        const alert = document.createElement('div');
+        alert.className = `alert-item alert-${type}`;
+        
+        const icons = {
+            info: 'ℹ️',
+            success: '✅',
+            warning: '⚠️',
+            error: '❌'
+        };
+        
+        alert.innerHTML = `
+            <span class="alert-icon">${icons[type]}</span>
+            <span class="alert-text">${message}</span>
+        `;
+        
+        container.insertBefore(alert, container.firstChild);
+        
+        // Limit alerts
+        while (container.children.length > 10) {
+            container.removeChild(container.lastChild);
+        }
+    }
+    
+    centerOnDrones() {
+        const bounds = L.latLngBounds();
+        let hasPosition = false;
+        
+        // Include GCS location
+        if (this.gcsMarker && this.gcsMarker.getLatLng().lat !== 0) {
+            bounds.extend(this.gcsMarker.getLatLng());
+            hasPosition = true;
+        }
+        
+        if (this.drone1Marker.getLatLng().lat !== 0) {
+            bounds.extend(this.drone1Marker.getLatLng());
+            hasPosition = true;
+        }
+        
+        if (this.drone2Marker.getLatLng().lat !== 0) {
+            bounds.extend(this.drone2Marker.getLatLng());
+            hasPosition = true;
+        }
+        
+        if (hasPosition) {
+            this.map.fitBounds(bounds, { padding: [50, 50], maxZoom: 18 });
+        } else {
+            this.addAlert('No drone positions available', 'warning');
+        }
+    }
+    
+    clearMission() {
+        if (confirm('Clear current mission?')) {
+            this.boundaryLayer.clearLayers();
+            this.gridLayer.clearLayers();
+            this.detectionMarkers.forEach(m => m.remove());
+            this.detectionMarkers = [];
+            this.missionData = null;
+            
+            document.getElementById('missionInfo').classList.add('hidden');
+            document.getElementById('generateGrid').disabled = true;
+            document.getElementById('startMission').disabled = true;
+            
+            this.addAlert('Mission cleared', 'info');
+            this.updateMissionStatus('idle');
+        }
+    }
+    
+    // Utility Functions
+    countCoordinates(feature) {
+        let count = 0;
+        if (feature.geometry.type === 'Polygon') {
+            count = feature.geometry.coordinates[0].length;
+        } else if (feature.geometry.type === 'LineString') {
+            count = feature.geometry.coordinates.length;
+        }
+        return count;
+    }
+    
+    calculateArea(feature) {
+        // Simple area calculation in hectares
+        if (feature.geometry.type !== 'Polygon') return 0;
+        
+        const coords = feature.geometry.coordinates[0];
+        let area = 0;
+        
+        for (let i = 0; i < coords.length - 1; i++) {
+            area += coords[i][0] * coords[i + 1][1];
+            area -= coords[i + 1][0] * coords[i][1];
+        }
+        
+        area = Math.abs(area / 2);
+        // Convert to hectares (rough approximation)
+        return area * 12100;
+    }
+    
+    extractCoordinates(feature) {
+        if (feature.geometry.type === 'Polygon') {
+            return feature.geometry.coordinates[0].map(c => [c[1], c[0]]);
+        } else if (feature.geometry.type === 'LineString') {
+            return feature.geometry.coordinates.map(c => [c[1], c[0]]);
+        }
+        return [];
+    }
+    
+    calculateBounds(coords) {
+        let minLat = Infinity, maxLat = -Infinity;
+        let minLon = Infinity, maxLon = -Infinity;
+        
+        coords.forEach(([lat, lon]) => {
+            minLat = Math.min(minLat, lat);
+            maxLat = Math.max(maxLat, lat);
+            minLon = Math.min(minLon, lon);
+            maxLon = Math.max(maxLon, lon);
+        });
+        
+        return { minLat, maxLat, minLon, maxLon };
+    }
+    
+    calculateLineSpacing(altitude, overlap) {
+        // Simplified calculation
+        const sensorWidth = 0.006; // m
+        const focalLength = 0.004; // m
+        const groundWidth = (altitude * sensorWidth) / focalLength;
+        return groundWidth * (1 - overlap / 100);
+    }
+    
+    generateGridLines(bounds, spacing, angle) {
+        const lines = [];
+        const { minLat, maxLat, minLon, maxLon } = bounds;
+        
+        // Convert spacing to degrees (rough approximation)
+        const spacingDeg = spacing / 111000;
+        
+        // Calculate center for rotation
+        const centerLat = (minLat + maxLat) / 2;
+        const centerLon = (minLon + maxLon) / 2;
+        
+        // Generate lawnmower pattern (back and forth)
+        let isLeftToRight = true;
+        for (let lat = minLat; lat <= maxLat; lat += spacingDeg) {
+            if (isLeftToRight) {
+                lines.push([
+                    [lat, minLon],
+                    [lat, maxLon]
+                ]);
+            } else {
+                lines.push([
+                    [lat, maxLon],
+                    [lat, minLon]
+                ]);
+            }
+            isLeftToRight = !isLeftToRight;
+        }
+        
+        return lines;
+    }
+    
+    calculateTotalDistance(lines) {
+        let total = 0;
+        lines.forEach(line => {
+            for (let i = 0; i < line.length - 1; i++) {
+                total += this.calculateDistance(line[i], line[i + 1]);
+            }
+        });
+        return total;
+    }
+    
+    calculateDistance(point1, point2) {
+        const R = 6371000; // Earth radius in meters
+        const lat1 = point1[0] * Math.PI / 180;
+        const lat2 = point2[0] * Math.PI / 180;
+        const deltaLat = (point2[0] - point1[0]) * Math.PI / 180;
+        const deltaLon = (point2[1] - point1[1]) * Math.PI / 180;
+        
+        const a = Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
+                  Math.cos(lat1) * Math.cos(lat2) *
+                  Math.sin(deltaLon / 2) * Math.sin(deltaLon / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        
+        return R * c;
+    }
+    
+    formatTime(seconds) {
+        const hours = Math.floor(seconds / 3600);
+        const minutes = Math.floor((seconds % 3600) / 60);
+        const secs = Math.floor(seconds % 60);
+        
+        if (hours > 0) {
+            return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }
+        return `${minutes}:${secs.toString().padStart(2, '0')}`;
+    }
+    
+    calculateBatteryPercentage(voltage) {
+        // Assuming 4S LiPo (12.6V - 14.4V)
+        const minVoltage = 12.6;
+        const maxVoltage = 16.8;
+        const percentage = ((voltage - minVoltage) / (maxVoltage - minVoltage)) * 100;
+        return Math.max(0, Math.min(100, percentage)).toFixed(0);
+    }
+    
+    getGPSStatus(fixType) {
+        const statuses = {
+            0: 'No Fix',
+            1: 'No Fix',
+            2: '2D Fix',
+            3: '3D Fix',
+            4: 'DGPS',
+            5: 'RTK Float',
+            6: 'RTK Fixed'
+        };
+        return statuses[fixType] || 'Unknown';
+    }
+    
+    // ============= AUTOMATED MISSION METHODS =============
+    
+    /**
+     * Upload mission waypoints to drone and start automated execution
+     */
+    async startAutomatedMission() {
+        if (!this.missionData || !this.missionData.waypoints) {
+            this.addAlert('No mission loaded. Please generate survey grid first.', 'warning');
+            return;
+        }
+        
+        try {
+            this.addAlert(' Starting automated mission...', 'info');
+            
+            const waypoints = this.missionData.waypoints;
+            this.addAlert(` Mission has ${waypoints.length} waypoints`, 'info');
+            
+            // Select drone - for now use Drone 1
+            const droneId = 1;
+            
+            // Check if drone is connected
+            const drone1Text = document.getElementById('drone1StatusText').textContent;
+            if (drone1Text !== 'Connected') {
+                this.addAlert(' Drone 1 not connected! Connect drone first.', 'error');
+                return;
+            }
+            
+            // Upload mission to PyMAVLink service
+            this.addAlert(' Uploading waypoints to drone...', 'info');
+            const uploadResponse = await fetch(`http://localhost:5000/drone/${droneId}/mission/upload`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ waypoints })
+            });
+            
+            if (!uploadResponse.ok) {
+                throw new Error('Failed to upload mission to drone');
+            }
+            
+            const uploadResult = await uploadResponse.json();
+            if (!uploadResult.success) {
+                throw new Error('Mission upload returned failure');
+            }
+            
+            this.addAlert(` ${uploadResult.waypoint_count} waypoints uploaded to drone`, 'success');
+            
+            // ARM the drone if not already armed
+            this.addAlert('🔧 Arming drone...', 'info');
+            const armResponse = await fetch(`http://localhost:5000/drone/${droneId}/arm`, {
+                method: 'POST'
+            });
+            const armResult = await armResponse.json();
+            
+            if (armResult.success) {
+                this.addAlert(' Drone armed', 'success');
+            } else {
+                this.addAlert('Failed to arm drone. Check GPS lock and pre-arm checks.', 'error');
+                return;
+            }
+            
+            await this.sleep(2000); // Wait for arm to settle
+            
+            // Start mission (will automatically set AUTO mode)
+            this.addAlert('Starting mission execution...', 'info');
+            const startResponse = await fetch(`http://localhost:5000/drone/${droneId}/mission/start`, {
+                method: 'POST'
+            });
+            const startResult = await startResponse.json();
+            
+            if (!startResult.success) {
+                throw new Error('Failed to start mission');
+            }
+            
+            this.addAlert(' Mission ACTIVE! Drone executing waypoints...', 'success');
+            this.updateMissionStatus('active');
+            
+            // Enable control buttons
+            document.getElementById('startMission').disabled = true;
+            document.getElementById('pauseMission').disabled = false;
+            document.getElementById('stopMission').disabled = false;
+            
+            // Start mission progress monitoring
+            this.startMissionProgressMonitoring(droneId);
+            
+            // Store active mission info
+            this.activeMission = {
+                droneId: droneId,
+                waypoints: waypoints,
+                startTime: Date.now()
+            };
+            
+            // Start mission timer
+            this.missionStartTime = Date.now();
+            this.missionInterval = setInterval(() => {
+                this.updateMissionTimer();
+            }, 1000);
+            
+        } catch (error) {
+            console.error('Automated mission error:', error);
+            this.addAlert(` Mission start failed: ${error.message}`, 'error');
+        }
+    }
+    
+    /**
+     * Monitor mission progress in real-time
+     */
+    startMissionProgressMonitoring(droneId) {
+        if (this.missionProgressInterval) {
+            clearInterval(this.missionProgressInterval);
+        }
+        
+        this.missionProgressInterval = setInterval(async () => {
+            try {
+                const response = await fetch(`http://localhost:5000/drone/${droneId}/mission/status`);
+                if (!response.ok) return;
+                
+                const data = await response.json();
+                const status = data.mission_status;
+                
+                // Update progress UI
+                const progressPercent = status.progress_percent || 0;
+                document.getElementById('progressFill').style.width = progressPercent + '%';
+                document.getElementById('progressPercent').textContent = progressPercent.toFixed(0) + '%';
+                
+                // Highlight current waypoint on map
+                this.highlightCurrentWaypoint(status.current_waypoint);
+                
+                // Check if mission completed
+                if (status.current_waypoint >= status.total_waypoints - 1 && status.active) {
+                    this.addAlert('Mission completed!', 'success');
+                    this.stopMissionProgressMonitoring();
+                    this.updateMissionStatus('completed');
+                    
+                    if (this.missionInterval) {
+                        clearInterval(this.missionInterval);
+                    }
+                }
+                
+            } catch (error) {
+                console.error('Mission status error:', error);
+            }
+        }, 2000);
+    }
+    
+    stopMissionProgressMonitoring() {
+        if (this.missionProgressInterval) {
+            clearInterval(this.missionProgressInterval);
+            this.missionProgressInterval = null;
+        }
+    }
+    
+    /**
+     * Highlight current waypoint on map
+     */
+    highlightCurrentWaypoint(wpIndex) {
+        if (!this.activeMission || !this.activeMission.waypoints) return;
+        
+        const waypoints = this.activeMission.waypoints;
+        if (wpIndex >= 0 && wpIndex < waypoints.length) {
+            const wp = waypoints[wpIndex];
+            const lat = wp.lat || wp.latitude;
+            const lon = wp.lon || wp.longitude;
+            
+            // Remove previous highlight if exists
+            if (this.currentWaypointMarker) {
+                this.map.removeLayer(this.currentWaypointMarker);
+            }
+            
+            // Add pulsing marker at current waypoint
+            this.currentWaypointMarker = L.circleMarker([lat, lon], {
+                radius: 15,
+                fillColor: '#ff00ff',
+                color: '#fff',
+                weight: 3,
+                opacity: 1,
+                fillOpacity: 0.6,
+                className: 'pulse-marker'
+            }).addTo(this.map);
+            
+            // Optionally pan to current waypoint (disabled to avoid jumpy map)
+            // this.map.panTo([lat, lon]);
+        }
+    }
+    
+    /**
+     * Pause automated mission
+     */
+    async pauseAutomatedMission() {
+        if (!this.activeMission) return;
+        
+        try {
+            this.addAlert('⏸️ Pausing mission...', 'info');
+            
+            const response = await fetch(`http://localhost:5000/drone/${this.activeMission.droneId}/mission/pause`, {
+                method: 'POST'
+            });
+            const result = await response.json();
+            
+            if (result.success) {
+                this.addAlert('Mission paused (LOITER mode)', 'warning');
+                this.updateMissionStatus('paused');
+                document.getElementById('pauseMission').innerHTML = '<span class="btn-icon">▶️</span> Resume';
+            }
+        } catch (error) {
+            this.addAlert('Failed to pause mission', 'error');
+        }
+    }
+    
+    /**
+     * Resume automated mission
+     */
+    async resumeAutomatedMission() {
+        if (!this.activeMission) return;
+        
+        try {
+            this.addAlert('▶️ Resuming mission...', 'info');
+            
+            const response = await fetch(`http://localhost:5000/drone/${this.activeMission.droneId}/mission/resume`, {
+                method: 'POST'
+            });
+            const result = await response.json();
+            
+            if (result.success) {
+                this.addAlert('Mission resumed', 'success');
+                this.updateMissionStatus('active');
+                document.getElementById('pauseMission').innerHTML = '<span class="btn-icon">⏸️</span> Pause';
+            }
+        } catch (error) {
+            this.addAlert('Failed to resume mission', 'error');
+        }
+    }
+    
+    /**
+     * Stop automated mission
+     */
+    async stopAutomatedMission() {
+        if (!this.activeMission) return;
+        
+        if (!confirm('Are you sure you want to stop the mission? The drone will enter LOITER mode.')) {
+            return;
+        }
+        
+        try {
+            this.addAlert('⏹️ Stopping mission...', 'info');
+            
+            const response = await fetch(`http://localhost:5000/drone/${this.activeMission.droneId}/mission/stop`, {
+                method: 'POST'
+            });
+            const result = await response.json();
+            
+            if (result.success) {
+                this.addAlert('Mission stopped', 'warning');
+                this.updateMissionStatus('stopped');
+                this.stopMissionProgressMonitoring();
+                
+                // Clear mission highlight
+                if (this.currentWaypointMarker) {
+                    this.map.removeLayer(this.currentWaypointMarker);
+                }
+                
+                // Reset buttons
+                document.getElementById('startMission').disabled = false;
+                document.getElementById('pauseMission').disabled = true;
+                document.getElementById('pauseMission').innerHTML = '<span class="btn-icon">⏸️</span> Pause';
+                document.getElementById('stopMission').disabled = true;
+                
+                // Clear timer
+                if (this.missionInterval) {
+                    clearInterval(this.missionInterval);
+                }
+                
+                this.activeMission = null;
+            }
+        } catch (error) {
+            this.addAlert('Failed to stop mission', 'error');
+        }
+    }
+    
+    /**
+     * Draw waypoint preview on map
+     */
+    drawWaypointPreview(waypoints) {
+        if (this.waypointPreviewLayer) {
+            this.map.removeLayer(this.waypointPreviewLayer);
+        }
+        
+        this.waypointPreviewLayer = L.layerGroup().addTo(this.map);
+        
+        // Draw path line
+        const coords = waypoints.map(wp => [wp.lat || wp.latitude, wp.lon || wp.longitude]);
+        L.polyline(coords, {
+            color: '#00ff00',
+            weight: 3,
+            opacity: 0.8,
+            dashArray: '10, 5'
+        }).addTo(this.waypointPreviewLayer);
+        
+        // Draw waypoint markers with numbers
+        waypoints.forEach((wp, i) => {
+            const lat = wp.lat || wp.latitude;
+            const lon = wp.lon || wp.longitude;
+            
+            let color = '#00ffff';
+            let radius = 6;
+            
+            if (i === 0) {
+                color = '#00ff00';
+                radius = 10;
+            } else if (i === waypoints.length - 1) {
+                color = '#ff0000';
+                radius = 10;
+            }
+            
+            const marker = L.circleMarker([lat, lon], {
+                radius: radius,
+                fillColor: color,
+                color: '#fff',
+                weight: 2,
+                opacity: 1,
+                fillOpacity: 0.8
+            }).addTo(this.waypointPreviewLayer);
+            
+            marker.bindPopup(`
+                <b>Waypoint ${i + 1}/${waypoints.length}</b><br>
+                Lat: ${lat.toFixed(6)}<br>
+                Lon: ${lon.toFixed(6)}<br>
+                Alt: ${wp.altitude || wp.alt || 0}m
+            `);
+        });
+        
+        // Fit map to waypoints
+        if (coords.length > 0) {
+            this.map.fitBounds(L.latLngBounds(coords));
+        }
+    }
+    
+    /**
+     * Helper sleep function
+     */
+    sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+}
+
+// Initialize dashboard when DOM is loaded
+document.addEventListener('DOMContentLoaded', () => {
+    window.missionControl = new MissionControl();
+});

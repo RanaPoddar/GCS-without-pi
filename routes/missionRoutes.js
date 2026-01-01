@@ -1,0 +1,260 @@
+const express = require('express');
+const router = express.Router();
+const fs = require('fs');
+const path = require('path');
+const multer = require('multer');
+const { exec } = require('child_process');
+const { promisify } = require('util');
+const config = require('../config/config');
+const logger = require('../config/logger');
+const missionService = require('../services/missionService');
+const pixhawkService = require('../services/pixhawkServicePyMAVLink');
+
+const execAsync = promisify(exec);
+
+// Configure multer for KML file uploads
+const kmlStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    if (!fs.existsSync(config.KML_UPLOADS_DIR)) {
+      fs.mkdirSync(config.KML_UPLOADS_DIR, { recursive: true });
+    }
+    cb(null, config.KML_UPLOADS_DIR);
+  },
+  filename: (req, file, cb) => {
+    const timestamp = Date.now();
+    cb(null, `${timestamp}_${file.originalname}`);
+  }
+});
+
+const uploadKML = multer({
+  storage: kmlStorage,
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype === 'application/vnd.google-earth.kml+xml' || 
+        file.originalname.endsWith('.kml')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only KML files are allowed'));
+    }
+  }
+});
+
+/**
+ * POST /api/mission/upload_kml
+ * Upload and process KML file to generate mission
+ */
+router.post('/upload_kml', uploadKML.single('kml'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No KML file uploaded' });
+    }
+
+    const kmlPath = req.file.path;
+    const altitude = parseFloat(req.body.altitude) || 15.0;
+    const speed = parseFloat(req.body.speed) || 2.0;
+    const drone_id = parseInt(req.body.drone_id) || 1;
+
+    logger.info(`📤 Processing KML file: ${req.file.originalname} for Drone ${drone_id}`);
+
+    const plannerPath = path.join(__dirname, '..', 'kml_mission_planner.py');
+    const outputPath = path.join(config.KML_UPLOADS_DIR, `mission_${Date.now()}.json`);
+
+    const venvPython = path.join(__dirname, '..', '..', '.venv', 'bin', 'python');
+    const command = `"${venvPython}" "${plannerPath}" "${kmlPath}" -a ${altitude} -s ${speed} --output "${outputPath}"`;
+    
+    logger.info(`🔧 Executing: ${command}`);
+    const { stdout, stderr } = await execAsync(command);
+
+    if (stderr && !stderr.includes('FutureWarning')) {
+      logger.warn(`Mission planner warnings: ${stderr}`);
+    }
+
+    if (!fs.existsSync(outputPath)) {
+      throw new Error('Mission file not generated');
+    }
+
+    const missionData = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
+    
+    const field_width_m = missionData.mission_params?.field_width_m || 0;
+    const field_length_m = missionData.mission_params?.field_length_m || 0;
+    const area_acres = (field_width_m * field_length_m) / 4046.86;
+    
+    const transformedWaypoints = (missionData.waypoints || []).map(wp => ({
+      seq: wp.seq,
+      lat: wp.latitude,
+      lon: wp.longitude,
+      alt: wp.altitude
+    }));
+    
+    const transformedMission = {
+      waypoints: transformedWaypoints,
+      metadata: {
+        field_info: {
+          width_m: field_width_m,
+          length_m: field_length_m,
+          area_acres: area_acres
+        },
+        survey_info: {
+          pattern: "Lawnmower",
+          direction: "North-South",
+          total_passes: missionData.mission_params?.num_passes || 0,
+          swath_width_m: missionData.mission_params?.swath_width_m || 0
+        },
+        mission_stats: {
+          total_distance_m: transformedWaypoints.reduce((sum, wp, i, arr) => {
+            if (i === 0) return 0;
+            const prev = arr[i-1];
+            const dx = (wp.lon - prev.lon) * 111320 * Math.cos(wp.lat * Math.PI / 180);
+            const dy = (wp.lat - prev.lat) * 110540;
+            return sum + Math.sqrt(dx*dx + dy*dy);
+          }, 0),
+          estimated_time_minutes: missionData.mission_params?.estimated_time_min || 0
+        }
+      }
+    };
+    
+    const missionId = `mission_${Date.now()}`;
+    missionService.pendingMissions.set(missionId, {
+      mission_id: missionId,
+      drone_id: drone_id,
+      kml_file: req.file.originalname,
+      mission_file: outputPath,
+      mission_data: missionData,
+      created_at: new Date().toISOString(),
+      status: 'pending_confirmation'
+    });
+
+    logger.info(`✅ Mission generated: ${transformedWaypoints.length} waypoints`);
+
+    res.json({
+      success: true,
+      mission_id: missionId,
+      mission: {
+        waypoints_count: transformedWaypoints.length,
+        field_info: transformedMission.metadata.field_info,
+        survey_info: transformedMission.metadata.survey_info,
+        mission_stats: transformedMission.metadata.mission_stats,
+        waypoints: transformedWaypoints
+      }
+    });
+
+  } catch (error) {
+    logger.error(`❌ KML processing error: ${error}`);
+    res.status(500).json({ 
+      error: 'Failed to process KML file', 
+      details: error.message 
+    });
+  }
+});
+
+/**
+ * POST /api/mission/:mission_id/start
+ * Confirm and start a pending mission
+ */
+router.post('/:mission_id/start', async (req, res) => {
+  try {
+    const missionId = req.params.mission_id;
+    const mission = missionService.pendingMissions.get(missionId);
+
+    if (!mission) {
+      return res.status(404).json({ error: 'Mission not found' });
+    }
+
+    const droneConnection = pixhawkService.getDroneConnection(mission.drone_id);
+    if (!droneConnection || !droneConnection.connected) {
+      return res.status(404).json({ error: 'Drone not connected' });
+    }
+
+    logger.info(`🚁 Starting mission ${missionId} on Drone ${mission.drone_id}`);
+
+    mission.status = 'ready';
+    missionService.pendingMissions.set(missionId, mission);
+
+    res.json({
+      success: true,
+      message: 'Mission upload initiated',
+      mission_id: missionId
+    });
+
+  } catch (error) {
+    logger.error(`❌ Mission start error: ${error}`);
+    res.status(500).json({ 
+      error: 'Failed to start mission', 
+      details: error.message 
+    });
+  }
+});
+
+/**
+ * GET /api/mission/:mission_id
+ * Get pending mission details
+ */
+router.get('/:mission_id', (req, res) => {
+  const missionId = req.params.mission_id;
+  const mission = missionService.pendingMissions.get(missionId);
+
+  if (!mission) {
+    return res.status(404).json({ error: 'Mission not found' });
+  }
+
+  let waypoints = [];
+  if (mission.mission_data && Array.isArray(mission.mission_data.waypoints)) {
+    waypoints = mission.mission_data.waypoints.map(wp => ({
+      ...wp,
+      lat: wp.latitude,
+      lon: wp.longitude,
+      alt: wp.altitude
+    }));
+  }
+
+  res.json({
+    mission_id: mission.mission_id,
+    pi_id: mission.pi_id,
+    status: mission.status,
+    created_at: mission.created_at,
+    mission_data: {
+      ...mission.mission_data,
+      waypoints: waypoints
+    }
+  });
+});
+
+/**
+ * GET /api/missions
+ * Get list of all completed missions
+ */
+router.get('/', (req, res) => {
+  const missions = missionService.getAllMissions();
+  res.json({ missions, total: missions.length });
+});
+
+/**
+ * GET /api/missions/:mission_id
+ * Get specific mission details
+ */
+router.get('/missions/:mission_id', (req, res) => {
+  const missionId = req.params.mission_id;
+  const metadata = missionService.getMissionById(missionId);
+  
+  if (!metadata) {
+    return res.status(404).json({ error: 'Mission not found' });
+  }
+  
+  res.json(metadata);
+});
+
+/**
+ * GET /api/missions/:mission_id/detections
+ * Get detections for a mission
+ */
+router.get('/missions/:mission_id/detections', (req, res) => {
+  const missionId = req.params.mission_id;
+  const detections = missionService.getMissionDetections(missionId);
+  
+  if (!detections) {
+    return res.status(404).json({ error: 'Mission not found' });
+  }
+  
+  res.json({ mission_id: missionId, detections, total: detections.length });
+});
+
+module.exports = router;
