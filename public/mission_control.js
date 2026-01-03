@@ -268,6 +268,16 @@ class MissionControl {
             this.handleDetection(data);
         });
         
+        // Detection status updates
+        this.socket.on('detection_status', (data) => {
+            this.handleDetectionStatus(data);
+        });
+        
+        // Detection stats updates
+        this.socket.on('detection_stats', (data) => {
+            this.handleDetectionStats(data);
+        });
+        
         // Mission status updates
         this.socket.on('mission_status', (data) => {
             this.handleMissionStatus(data);
@@ -323,6 +333,23 @@ class MissionControl {
         
         document.getElementById('returnToHome').addEventListener('click', () => {
             this.returnToHome();
+        });
+        
+        // Detection Control Buttons
+        document.getElementById('startDetection1').addEventListener('click', () => {
+            this.startDetection(1);
+        });
+        
+        document.getElementById('stopDetection1').addEventListener('click', () => {
+            this.stopDetection(1);
+        });
+        
+        document.getElementById('startDetection2').addEventListener('click', () => {
+            this.startDetection(2);
+        });
+        
+        document.getElementById('stopDetection2').addEventListener('click', () => {
+            this.stopDetection(2);
         });
         
         // Map Controls
@@ -703,6 +730,97 @@ class MissionControl {
         }
     }
     
+    // Detection Control Methods
+    startDetection(droneId) {
+        console.log(`Starting detection for Drone ${droneId}`);
+        
+        // Try Socket.IO first (WiFi - shorter range but faster)
+        this.socket.emit('start_detection', { 
+            pi_id: droneId === 1 ? 'detection_drone_pi_pushpak' : 'drone_2_pi'
+        });
+        
+        // Also send via MAVLink for long-range control (1-10km)
+        this.sendMAVLinkDetectionCommand(droneId, 'start');
+        
+        this.addAlert(`Starting detection on Drone ${droneId} (WiFi + MAVLink)...`, 'info');
+    }
+    
+    stopDetection(droneId) {
+        console.log(`Stopping detection for Drone ${droneId}`);
+        
+        // Try Socket.IO first
+        this.socket.emit('stop_detection', { 
+            pi_id: droneId === 1 ? 'detection_drone_pi_pushpak' : 'drone_2_pi'
+        });
+        
+        // Also send via MAVLink for long-range control
+        this.sendMAVLinkDetectionCommand(droneId, 'stop');
+        
+        this.addAlert(`Stopping detection on Drone ${droneId} (WiFi + MAVLink)...`, 'info');
+    }
+    
+    async sendMAVLinkDetectionCommand(droneId, action) {
+        /**
+         * Send detection control via MAVLink (long-range 1-10km).
+         * This works even when drone is outside WiFi range.
+         */
+        try {
+            const endpoint = action === 'start' ? 
+                `/drone/${droneId}/pi/start_detection` : 
+                `/drone/${droneId}/pi/stop_detection`;
+            
+            const response = await fetch(`http://localhost:5000${endpoint}`, {
+                method: 'POST'
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                console.log(`✅ MAVLink ${action} detection command sent to Drone ${droneId}`);
+            } else {
+                console.warn(`⚠️  MAVLink command failed: ${data.error || 'Unknown error'}`);
+            }
+        } catch (error) {
+            console.error(`❌ Failed to send MAVLink command: ${error.message}`);
+            // Don't show error to user - Socket.IO might still work
+        }
+    }
+    
+    handleDetectionStatus(data) {
+        console.log('Detection status update:', data);
+        
+        // Determine drone ID from pi_id
+        const droneId = data.pi_id === 'detection_drone_pi_pushpak' ? 1 : 2;
+        const statusElement = document.getElementById(`detection${droneId}Status`);
+        
+        if (statusElement) {
+            if (data.status === 'active') {
+                statusElement.textContent = '🟢 Active';
+                statusElement.style.color = '#22c55e';
+                this.addAlert(`Drone ${droneId} detection started`, 'success');
+            } else if (data.status === 'inactive') {
+                statusElement.textContent = '⚪ Inactive';
+                statusElement.style.color = '#64748b';
+                this.addAlert(`Drone ${droneId} detection stopped`, 'warning');
+            } else if (data.status === 'failed') {
+                statusElement.textContent = '🔴 Failed';
+                statusElement.style.color = '#ef4444';
+                this.addAlert(`Drone ${droneId} detection failed: ${data.message}`, 'error');
+            }
+        }
+    }
+    
+    handleDetectionStats(data) {
+        console.log('Detection stats update:', data);
+        
+        const droneId = data.pi_id === 'detection_drone_pi_pushpak' ? 1 : 2;
+        const countElement = document.getElementById(`drone${droneId}Detections`);
+        
+        if (countElement && data.stats) {
+            countElement.textContent = data.stats.detection_count || data.stats.total_detections || 0;
+        }
+    }
+    
     // Detection Handler
     handleDetection(data) {
         if (data.latitude && data.longitude) {
@@ -764,16 +882,28 @@ class MissionControl {
         const indicator = document.getElementById(`drone${droneId}StatusIndicator`);
         const text = document.getElementById(`drone${droneId}StatusText`);
         
+        // Update detection control buttons
+        const startBtn = document.getElementById(`startDetection${droneId}`);
+        const stopBtn = document.getElementById(`stopDetection${droneId}`);
+        
         if (connected) {
             indicator.classList.remove('disconnected');
             indicator.classList.add('connected');
             text.textContent = 'Connected';
             text.style.color = '#48bb78';
+            
+            // Enable detection buttons
+            if (startBtn) startBtn.disabled = false;
+            if (stopBtn) stopBtn.disabled = false;
         } else {
             indicator.classList.remove('connected');
             indicator.classList.add('disconnected');
             text.textContent = 'Disconnected';
             text.style.color = '#fc8181';
+            
+            // Disable detection buttons
+            if (startBtn) startBtn.disabled = true;
+            if (stopBtn) stopBtn.disabled = true;
         }
     }
 

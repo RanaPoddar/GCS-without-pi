@@ -1041,9 +1041,126 @@ def mission_status(drone_id):
     })
 
 
+# ========================================
+#    Long-Range Pi Control via MAVLink   |
+# ========================================
+
+@app.route('/drone/<int:drone_id>/pi/start_detection', methods=['POST'])
+def pi_start_detection(drone_id):
+    """Send MAVLink command to Pi to start detection (long-range control)"""
+    if drone_id not in drones or not drones[drone_id].connected:
+        return jsonify({'error': 'Drone not connected'}), 404
+    
+    try:
+        # Send custom MAVLink command 42000 = Start Detection
+        drones[drone_id].master.mav.command_long_send(
+            drones[drone_id].master.target_system,
+            drones[drone_id].master.target_component,
+            42000,  # Custom command ID for start detection
+            0,      # confirmation
+            0, 0, 0, 0, 0, 0, 0  # params
+        )
+        
+        logger.info(f"📡 Sent MAVLink command: Start Detection to Drone {drone_id}")
+        
+        # Wait for ACK
+        ack = drones[drone_id].master.recv_match(type='COMMAND_ACK', blocking=True, timeout=3.0)
+        if ack and ack.command == 42000:
+            success = ack.result == mavutil.mavlink.MAV_RESULT_ACCEPTED
+            return jsonify({
+                'success': success,
+                'command': 'start_detection',
+                'drone_id': drone_id,
+                'ack_result': ack.result
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'command': 'start_detection',
+                'drone_id': drone_id,
+                'error': 'No ACK received'
+            })
+            
+    except Exception as e:
+        logger.error(f"Failed to send start detection command: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/drone/<int:drone_id>/pi/stop_detection', methods=['POST'])
+def pi_stop_detection(drone_id):
+    """Send MAVLink command to Pi to stop detection"""
+    if drone_id not in drones or not drones[drone_id].connected:
+        return jsonify({'error': 'Drone not connected'}), 404
+    
+    try:
+        # Send custom MAVLink command 42001 = Stop Detection
+        drones[drone_id].master.mav.command_long_send(
+            drones[drone_id].master.target_system,
+            drones[drone_id].master.target_component,
+            42001,  # Custom command ID for stop detection
+            0,      # confirmation
+            0, 0, 0, 0, 0, 0, 0  # params
+        )
+        
+        logger.info(f"📡 Sent MAVLink command: Stop Detection to Drone {drone_id}")
+        
+        # Wait for ACK
+        ack = drones[drone_id].master.recv_match(type='COMMAND_ACK', blocking=True, timeout=3.0)
+        if ack and ack.command == 42001:
+            success = ack.result == mavutil.mavlink.MAV_RESULT_ACCEPTED
+            return jsonify({
+                'success': success,
+                'command': 'stop_detection',
+                'drone_id': drone_id,
+                'ack_result': ack.result
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'command': 'stop_detection',
+                'drone_id': drone_id,
+                'error': 'No ACK received'
+            })
+            
+    except Exception as e:
+        logger.error(f"Failed to send stop detection command: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/drone/<int:drone_id>/pi/request_stats', methods=['POST'])
+def pi_request_stats(drone_id):
+    """Request detection statistics from Pi via MAVLink"""
+    if drone_id not in drones or not drones[drone_id].connected:
+        return jsonify({'error': 'Drone not connected'}), 404
+    
+    try:
+        # Send custom MAVLink command 42002 = Request Stats
+        drones[drone_id].master.mav.command_long_send(
+            drones[drone_id].master.target_system,
+            drones[drone_id].master.target_component,
+            42002,  # Custom command ID for request stats
+            0,      # confirmation
+            0, 0, 0, 0, 0, 0, 0  # params
+        )
+        
+        logger.info(f"📡 Sent MAVLink command: Request Stats to Drone {drone_id}")
+        
+        return jsonify({
+            'success': True,
+            'command': 'request_stats',
+            'drone_id': drone_id,
+            'note': 'Stats will be sent via Socket.IO when available'
+        })
+            
+    except Exception as e:
+        logger.error(f"Failed to send request stats command: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 if __name__ == '__main__':
     logger.info("🚀 Starting PyMAVLink Service...")
     logger.info("📡 Service will listen on http://0.0.0.0:5000")
+    logger.info("🌾 Long-range Pi control enabled via MAVLink (commands 42000-42999)")
     
     # Start Flask server
     app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)

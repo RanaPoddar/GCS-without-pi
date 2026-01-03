@@ -161,6 +161,22 @@ function setupSocketHandlers(io) {
       io.emit('detection_status', data);
     });
     
+    // Detection control - forward to Pi
+    socket.on('start_detection', (data) => {
+      logger.info(`Dashboard requesting start detection for Pi: ${data.pi_id}`);
+      io.emit('start_detection', data);
+    });
+    
+    socket.on('stop_detection', (data) => {
+      logger.info(`Dashboard requesting stop detection for Pi: ${data.pi_id}`);
+      io.emit('stop_detection', data);
+    });
+    
+    socket.on('get_detection_stats', (data) => {
+      logger.info(`Dashboard requesting detection stats for Pi: ${data.pi_id}`);
+      io.emit('get_detection_stats', data);
+    });
+    
     // ========================================
     //          Mission Management            |
     // ========================================

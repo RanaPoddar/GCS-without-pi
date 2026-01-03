@@ -163,6 +163,45 @@
                     </div>
                 </div>
 
+                <!-- Detection Control -->
+                <div class="panel-section">
+                    <h3 class="section-title">
+                        <span class="section-icon">🌾</span>
+                        Crop Detection
+                    </h3>
+                    
+                    <div class="action-buttons">
+                        <button class="btn btn-success" id="startDetection1" disabled>
+                            <span class="btn-icon">▶️</span>
+                            Start Detection (D1)
+                        </button>
+                        
+                        <button class="btn btn-warning" id="stopDetection1" disabled>
+                            <span class="btn-icon">⏹️</span>
+                            Stop Detection (D1)
+                        </button>
+                        
+                        <button class="btn btn-success" id="startDetection2" disabled>
+                            <span class="btn-icon">▶️</span>
+                            Start Detection (D2)
+                        </button>
+                        
+                        <button class="btn btn-warning" id="stopDetection2" disabled>
+                            <span class="btn-icon">⏹️</span>
+                            Stop Detection (D2)
+                        </button>
+                    </div>
+                    
+                    <div class="info-item" style="margin-top: 10px;">
+                        <span class="info-label">D1 Status:</span>
+                        <span class="info-value" id="detection1Status">Inactive</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">D2 Status:</span>
+                        <span class="info-value" id="detection2Status">Inactive</span>
+                    </div>
+                </div>
+
                 <!-- Mission Progress -->
                 <div class="panel-section">
                     <h3 class="section-title">
