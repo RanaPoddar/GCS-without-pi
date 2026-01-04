@@ -263,8 +263,32 @@ class MissionControl {
             this.addAlert(`Drone ${data.drone_id} disconnected`, 'error');
         });
         
+        // Pi connected/disconnected (treat as drone)
+        this.socket.on('pi_connected', (data) => {
+            console.log('Pi connected:', data);
+            // Map pi_id to drone_id
+            if (data.pi_id === 'detection_drone_pi_pushpak') {
+                this.updateDroneConnectionStatus(1, true);
+                this.addAlert('Detection Pi connected', 'success');
+            }
+        });
+        
+        this.socket.on('pi_disconnected', (data) => {
+            console.log('Pi disconnected:', data);
+            if (data.pi_id === 'detection_drone_pi_pushpak') {
+                this.updateDroneConnectionStatus(1, false);
+                this.addAlert('Detection Pi disconnected', 'error');
+            }
+        });
+        
         // Detection updates
         this.socket.on('detection', (data) => {
+            this.handleDetection(data);
+        });
+        
+        // Crop detection from Pi
+        this.socket.on('crop_detection', (data) => {
+            console.log('Crop detection received:', data);
             this.handleDetection(data);
         });
         

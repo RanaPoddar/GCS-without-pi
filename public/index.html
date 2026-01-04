@@ -146,7 +146,7 @@
             border-radius: 5px;
             font-size: 16px;
             margin-bottom: 15px;
-            display: none; /* Hidden - not used */
+            background: white;
         }
 
         .video-container {
@@ -694,6 +694,7 @@
                     <button class="btn-danger" onclick="stopStream()">⏹ Stop Stream</button>
                     <button class="btn-primary" onclick="captureImage()">📸 Capture Image</button>
                     <button class="btn-primary" onclick="testCamera()">🔧 Test Camera</button>
+                    <button class="btn-warning" onclick="debugPiConnection()" style="margin-top: 5px;">🔍 Debug Pi List</button>
                 </div>
             </div>
 
@@ -1239,13 +1240,17 @@
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
-        // Initialize Socket.IO
+        // Initialize Socket.IO - auto-detect server URL
         const socket = io();
         
         // State management
         let connectedPis = new Map();
+        let connectedDrones = new Map();
         let currentStreamingPi = null;
         let streamInterval = null;
+        
+        console.log('Socket.IO initialized');
+        console.log('Connecting to:', window.location.origin);
 
         // Update connection status
         function updateConnectionStatus(connected) {
@@ -1280,6 +1285,10 @@
 
         // Update Pi selectors
         function updatePiSelectors() {
+            console.log('🔄 Updating Pi selectors');
+            console.log('   Connected Pis Map size:', connectedPis.size);
+            console.log('   Connected Pis:', Array.from(connectedPis.entries()));
+            
             const selectors = [
                 document.getElementById('videoStreamPiSelect'),
                 document.getElementById('statsPiSelect'),
@@ -1289,20 +1298,62 @@
             ];
 
             selectors.forEach(select => {
+                if (!select) {
+                    console.warn('⚠️  Selector element not found:', select);
+                    return;
+                }
+                
                 const currentValue = select.value;
                 select.innerHTML = '<option value="">Select a Raspberry Pi...</option>';
                 
+                let addedCount = 0;
                 connectedPis.forEach((pi, id) => {
+                    console.log(`   Adding Pi to selector: ${id}`, pi);
                     const option = document.createElement('option');
                     option.value = id;
                     option.textContent = `${id} (${pi.connected ? 'Online' : 'Offline'})`;
                     select.appendChild(option);
+                    addedCount++;
                 });
+                
+                console.log(`   Added ${addedCount} options to selector ${select.id}`);
                 
                 if (currentValue && connectedPis.has(currentValue)) {
                     select.value = currentValue;
                 }
             });
+            
+            console.log(`✅ Updated ${selectors.filter(s => s).length} selectors with ${connectedPis.size} Pis`);
+        }
+        
+        // Debug function to check Pi connection status
+        function debugPiConnection() {
+            console.log('\n========== PI CONNECTION DEBUG ==========');
+            console.log('Total connected Pis:', connectedPis.size);
+            console.log('Connected Pis Map:', connectedPis);
+            console.log('Connected Pis Array:', Array.from(connectedPis.entries()));
+            
+            // Request fresh Pi list from server
+            socket.emit('request_pi_list');
+            console.log('Requested fresh Pi list from server');
+            
+            // Show alert with current state
+            let message = `Connected Pis: ${connectedPis.size}\n\n`;
+            if (connectedPis.size === 0) {
+                message += 'No Pis connected!\n\nPossible issues:\n';
+                message += '1. Pi might not be running\n';
+                message += '2. Pi cannot reach server\n';
+                message += '3. Wrong server URL in Pi config\n';
+                message += '4. Pi registered but browser missed event';
+            } else {
+                message += 'Registered Pis:\n';
+                connectedPis.forEach((pi, id) => {
+                    message += `\n- ${id} (${pi.connected ? 'Online' : 'Offline'})\n`;
+                    message += `  Connected at: ${pi.connected_at}\n`;
+                });
+            }
+            alert(message);
+            console.log('========== END DEBUG ==========\n');
         }
 
         // Update statistics display
@@ -1358,9 +1409,11 @@
 
         // Socket.IO event handlers
         socket.on('connect', () => {
+            console.log('Socket.IO connected to server');
             addLog('Connected to server', 'success');
             updateConnectionStatus(true);
             socket.emit('request_pi_list');
+            console.log('Requested Pi list from server');
         });
 
         socket.on('disconnect', () => {
@@ -1369,23 +1422,76 @@
         });
 
         socket.on('pi_connected', (data) => {
+            console.log('🥧 Pi connected event received:', data);
+            console.log('   Pi ID:', data.pi_id);
+            console.log('   Before adding - Map size:', connectedPis.size);
+            
             addLog(`Pi connected: ${data.pi_id}`, 'success');
-            connectedPis.set(data.pi_id, { connected: true });
+            connectedPis.set(data.pi_id, { 
+                id: data.pi_id,
+                connected: true,
+                connected_at: new Date().toISOString()
+            });
+            
+            console.log('   After adding - Map size:', connectedPis.size);
+            console.log('   Current Pis:', Array.from(connectedPis.keys()));
+            
             updatePiSelectors();
         });
 
         socket.on('pi_disconnected', (data) => {
+            console.log('Pi disconnected event received:', data);
             addLog(`Pi disconnected: ${data.pi_id}`, 'error');
             connectedPis.delete(data.pi_id);
             updatePiSelectors();
         });
 
         socket.on('pi_list', (data) => {
+            console.log('Pi list received:', data);
             data.pis.forEach(pi => {
                 connectedPis.set(pi.id, pi);
             });
             updatePiSelectors();
             addLog(`Found ${data.pis.length} connected Pi(s)`, 'info');
+        });
+        
+        // Also handle drone list (for compatibility)
+        socket.on('drones_status', (data) => {
+            console.log('Drones status received:', data);
+            if (data.drones && Array.isArray(data.drones)) {
+                data.drones.forEach(drone => {
+                    const id = `drone_${drone.drone_id}`;
+                    connectedDrones.set(id, {
+                        id: id,
+                        drone_id: drone.drone_id,
+                        connected: drone.connected,
+                        type: 'drone'
+                    });
+                    // Also add to Pi list for dropdown compatibility
+                    connectedPis.set(id, {
+                        id: id,
+                        connected: drone.connected
+                    });
+                });
+                updatePiSelectors();
+                addLog(`Found ${data.drones.length} drone(s)`, 'info');
+            }
+        });
+        
+        socket.on('drone_connected', (data) => {
+            console.log('Drone connected:', data);
+            const id = `drone_${data.drone_id}`;
+            connectedPis.set(id, { id: id, connected: true });
+            updatePiSelectors();
+            addLog(`Drone ${data.drone_id} connected`, 'success');
+        });
+        
+        socket.on('drone_disconnected', (data) => {
+            console.log('Drone disconnected:', data);
+            const id = `drone_${data.drone_id}`;
+            connectedPis.delete(id);
+            updatePiSelectors();
+            addLog(`Drone ${data.drone_id} disconnected`, 'error');
         });
 
         socket.on('pi_stats_update', (data) => {
@@ -1395,7 +1501,26 @@
             }
         });
 
+        // System stats from Pi
+        socket.on('system_stats', (data) => {
+            const selectedPi = document.getElementById('statsPiSelect').value;
+            if (data.pi_id === selectedPi) {
+                updateStats(data.stats);
+            }
+        });
+
         socket.on('video_frame', (data) => {
+            if (data.pi_id === currentStreamingPi) {
+                const video = document.getElementById('videoFeed');
+                const overlay = document.getElementById('videoOverlay');
+                video.src = 'data:image/jpeg;base64,' + data.frame;
+                video.style.display = 'block';
+                overlay.style.display = 'none';
+            }
+        });
+
+        // Camera frame from Pi (alternative event name)
+        socket.on('camera_frame', (data) => {
             if (data.pi_id === currentStreamingPi) {
                 const video = document.getElementById('videoFeed');
                 const overlay = document.getElementById('videoOverlay');
@@ -1413,6 +1538,19 @@
 
         socket.on('stream_update', (data) => {
             addLog(`Stream ${data.status} for ${data.pi_id}`, 'info');
+        });
+
+        // Stream status from Pi
+        socket.on('stream_status', (data) => {
+            addLog(`Stream ${data.status}: ${data.message}`, 'info');
+            
+            if (data.status === 'started') {
+                const overlay = document.getElementById('videoOverlay');
+                overlay.textContent = 'Waiting for frames...';
+            } else if (data.status === 'failed') {
+                const overlay = document.getElementById('videoOverlay');
+                overlay.textContent = `Stream failed: ${data.message}`;
+            }
         });
 
         // Drone telemetry handlers
@@ -2385,7 +2523,9 @@
 
         // Request Pi list and waypoints on page load
         window.addEventListener('load', () => {
+            console.log('Page loaded, requesting Pi and drone list...');
             socket.emit('request_pi_list');
+            socket.emit('request_drone_list');
             socket.emit('request_waypoints');
         });
     </script>
