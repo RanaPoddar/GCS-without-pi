@@ -548,14 +548,27 @@ class DroneConnection:
                 return False
             
             self.mission_waypoints = waypoints
-            logger.info(f"📥 Uploading {len(waypoints)} waypoints to Drone {self.drone_id}")
+            
+            # Add TAKEOFF waypoint as first item
+            takeoff_alt = waypoints[0].get('altitude', waypoints[0].get('alt', 15))
+            takeoff_waypoint = {
+                'latitude': waypoints[0].get('latitude', waypoints[0].get('lat', 0)),
+                'longitude': waypoints[0].get('longitude', waypoints[0].get('lon', 0)),
+                'altitude': takeoff_alt,
+                'command': mavutil.mavlink.MAV_CMD_NAV_TAKEOFF
+            }
+            
+            # Prepend takeoff to mission
+            full_mission = [takeoff_waypoint] + waypoints
+            
+            logger.info(f"📥 Uploading {len(full_mission)} waypoints (including TAKEOFF) to Drone {self.drone_id}")
             
             if self.simulation:
-                logger.info(f"🎮 SIMULATION: Pretending to upload {len(waypoints)} waypoints...")
+                logger.info(f"🎮 SIMULATION: Pretending to upload {len(full_mission)} waypoints...")
                 # Simulate upload delay
-                for i, wp in enumerate(waypoints):
+                for i, wp in enumerate(full_mission):
                     if i % 10 == 0:  # Log every 10th waypoint
-                        logger.info(f"  📍 Simulated upload: waypoint {i+1}/{len(waypoints)}")
+                        logger.info(f"  📍 Simulated upload: waypoint {i+1}/{len(full_mission)}")
                     time.sleep(0.01)  # Small delay to simulate upload time
                 
                 logger.info(f"✅ Simulated mission upload successful for Drone {self.drone_id}")
@@ -566,31 +579,40 @@ class DroneConnection:
             time.sleep(0.5)
             
             # Send waypoint count
-            self.master.waypoint_count_send(len(waypoints))
+            self.master.waypoint_count_send(len(full_mission))
             time.sleep(0.3)
             
             # Upload each waypoint
-            for i, wp in enumerate(waypoints):
+            for i, wp in enumerate(full_mission):
                 # Wait for waypoint request
                 msg = self.master.recv_match(type='MISSION_REQUEST', blocking=True, timeout=5)
                 if msg and msg.seq == i:
+                    # Determine command type
+                    cmd = wp.get('command', mavutil.mavlink.MAV_CMD_NAV_WAYPOINT)
+                    
+                    # Get coordinates
+                    lat = wp.get('latitude', wp.get('lat', 0))
+                    lon = wp.get('longitude', wp.get('lon', 0))
+                    alt = wp.get('altitude', wp.get('alt', 0))
+                    
                     self.master.mav.mission_item_send(
                         self.master.target_system,
                         self.master.target_component,
                         i,  # seq
                         mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,
-                        mavutil.mavlink.MAV_CMD_NAV_WAYPOINT,
+                        cmd,  # Use appropriate command
                         0,  # current (0=not current, 1=current waypoint)
                         1,  # autocontinue
-                        0,  # param1 (hold time)
+                        0,  # param1 (hold time for waypoint, min pitch for takeoff)
                         0,  # param2 (acceptance radius)
                         0,  # param3 (pass through)
                         0,  # param4 (yaw)
-                        wp['latitude'],
-                        wp['longitude'],
-                        wp['altitude']
+                        lat,
+                        lon,
+                        alt
                     )
-                    logger.info(f"  Waypoint {i+1}/{len(waypoints)} uploaded")
+                    cmd_name = "TAKEOFF" if cmd == mavutil.mavlink.MAV_CMD_NAV_TAKEOFF else "WAYPOINT"
+                    logger.info(f"  {cmd_name} {i+1}/{len(full_mission)} uploaded")
                 else:
                     logger.error(f"No request received for waypoint {i}")
                     return False
@@ -629,14 +651,23 @@ class DroneConnection:
                 logger.info(f"✅ Simulated mission started for Drone {self.drone_id} ({len(self.mission_waypoints)} waypoints)")
                 return True
             
-            # Set to AUTO mode to start mission
-            logger.info(f" Starting AUTO mission for Drone {self.drone_id}")
+            # Step 1: Set to GUIDED mode first (required before AUTO)
+            current_mode = self.telemetry.get('flight_mode', '')
+            if 'GUIDED' not in current_mode.upper():
+                logger.info(f"🔧 Setting GUIDED mode before mission start...")
+                if not self.set_mode('GUIDED'):
+                    logger.error(f"Failed to set GUIDED mode")
+                    return False
+                time.sleep(1.0)  # Wait for mode change
+            
+            # Step 2: Set to AUTO mode to start mission
+            logger.info(f"🚁 Starting AUTO mission for Drone {self.drone_id}")
             success = self.set_mode('AUTO')
             
             if success:
                 self.mission_active = True
                 self.current_waypoint_index = 0
-                logger.info(f" Mission started for Drone {self.drone_id}")
+                logger.info(f"✅ Mission started for Drone {self.drone_id} (TAKEOFF + {len(self.mission_waypoints)} waypoints)")
                 return True
             else:
                 logger.error(f"Failed to set AUTO mode for Drone {self.drone_id}")

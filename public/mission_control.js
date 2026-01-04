@@ -344,14 +344,17 @@ class MissionControl {
         
         // Mission Control Buttons
         document.getElementById('startMission').addEventListener('click', () => {
+            console.log('🔘 Start Mission button clicked');
             this.startMission();
         });
         
         document.getElementById('pauseMission').addEventListener('click', () => {
+            console.log('🔘 Pause Mission button clicked');
             this.pauseMission();
         });
         
         document.getElementById('stopMission').addEventListener('click', () => {
+            console.log('🔘 Stop Mission button clicked');
             this.stopMission();
         });
         
@@ -489,6 +492,7 @@ class MissionControl {
                 document.getElementById('missionInfo').classList.remove('hidden');
                 
                 this.addAlert(`KML loaded: ${file.name}`, 'success');
+                alert(`✅ KML File Loaded!\n\nFile: ${file.name}\n\nNext: Click "Generate Grid" button.`);
                 this.updateMissionStatus('ready');
                 document.getElementById('generateGrid').disabled = false;
             }
@@ -571,6 +575,7 @@ class MissionControl {
             this.drawWaypointPreview(waypoints);
             
             this.addAlert(`Survey grid loaded: ${waypoints.length} waypoints`, 'success');
+            alert(`✅ Survey Grid Generated!\n\n${waypoints.length} waypoints created\n\nNext step: Connect drone and click "Start Mission" to begin.`);
             document.getElementById('startMission').disabled = false;
         } catch (error) {
             console.error('Grid generation error:', error);
@@ -580,8 +585,47 @@ class MissionControl {
     
     // Mission Control Functions - Now with automated execution
     async startMission() {
+        console.log('🎯 Start Mission button clicked');
+        console.log('Mission data:', this.missionData);
+        
+        // Validate mission data exists
+        if (!this.missionData || !this.missionData.waypoints || this.missionData.waypoints.length === 0) {
+            console.error('❌ No mission data available');
+            console.log('this.missionData:', this.missionData);
+            const errorMsg = '❌ No mission loaded!\n\nPlease upload KML file and generate survey grid first.';
+            alert(errorMsg);
+            this.addAlert('❌ No mission loaded! Please upload KML and generate survey grid first.', 'error');
+            return;
+        }
+        
+        console.log(`✅ Mission has ${this.missionData.waypoints.length} waypoints`);
+        
+        // Check drone connection
+        const drone1StatusEl = document.getElementById('drone1StatusText');
+        console.log('Drone status element:', drone1StatusEl);
+        const drone1Text = drone1StatusEl ? drone1StatusEl.textContent : 'NOT FOUND';
+        console.log('Drone 1 status text:', drone1Text);
+        
+        if (drone1Text !== 'Connected') {
+            console.error('❌ Drone not connected, status:', drone1Text);
+            const errorMsg = `❌ Drone 1 is not connected!\n\nCurrent Status: ${drone1Text}\n\nPlease connect the drone using PyMAVLink service before starting mission.`;
+            alert(errorMsg);
+            this.addAlert('❌ Drone 1 is not connected!', 'error');
+            this.addAlert('ℹ️ Please connect the drone before starting mission.', 'info');
+            return;
+        }
+        
+        console.log('✅ All validations passed, starting automated mission...');
+        
         // Use automated mission execution instead of manual control
-        await this.startAutomatedMission();
+        try {
+            await this.startAutomatedMission();
+        } catch (error) {
+            console.error('Start mission error:', error);
+            const errorMsg = `❌ Mission Start Failed!\n\n${error.message}`;
+            alert(errorMsg);
+            this.addAlert(`❌ Mission start failed: ${error.message}`, 'error');
+        }
     }
     
     async pauseMission() {
@@ -595,32 +639,6 @@ class MissionControl {
     
     async stopMission() {
         await this.stopAutomatedMission();
-    }
-    
-    pauseMission() {
-        this.addAlert('Pausing mission...', 'warning');
-        this.socket.emit('pause_mission');
-        this.updateMissionStatus('warning');
-    }
-    
-    stopMission() {
-        this.addAlert('Stopping mission...', 'warning');
-        this.updateMissionStatus('idle');
-        
-        // Reset buttons
-        document.getElementById('startMission').disabled = false;
-        document.getElementById('pauseMission').disabled = true;
-        document.getElementById('stopMission').disabled = true;
-        document.getElementById('returnToHome').disabled = true;
-        
-        // Stop timer
-        if (this.missionInterval) {
-            clearInterval(this.missionInterval);
-            this.missionInterval = null;
-        }
-        
-        this.socket.emit('stop_mission');
-        this.addAlert('Mission stopped', 'info');
     }
     
     returnToHome() {
@@ -1187,45 +1205,66 @@ class MissionControl {
      * Upload mission waypoints to drone and start automated execution
      */
     async startAutomatedMission() {
+        console.log('🚀 Starting automated mission...');
+        
         if (!this.missionData || !this.missionData.waypoints) {
-            this.addAlert('No mission loaded. Please generate survey grid first.', 'warning');
+            console.error('No mission data available');
+            this.addAlert('❌ No mission loaded. Please generate survey grid first.', 'warning');
             return;
         }
         
         try {
-            this.addAlert(' Starting automated mission...', 'info');
+            this.addAlert('🚀 Starting automated mission...', 'info');
             
             const waypoints = this.missionData.waypoints;
-            this.addAlert(` Mission has ${waypoints.length} waypoints`, 'info');
+            console.log(`Mission has ${waypoints.length} waypoints`);
+            this.addAlert(`📊 Mission has ${waypoints.length} waypoints`, 'info');
             
             // Select drone - for now use Drone 1
             const droneId = 1;
             
             // Check if drone is connected
             const drone1Text = document.getElementById('drone1StatusText').textContent;
+            console.log(`Drone 1 status: ${drone1Text}`);
             if (drone1Text !== 'Connected') {
-                this.addAlert(' Drone 1 not connected! Connect drone first.', 'error');
+                console.error('Drone 1 not connected');
+                this.addAlert('❌ Drone 1 not connected! Connect drone first.', 'error');
                 return;
             }
             
             // Upload mission to PyMAVLink service
-            this.addAlert(' Uploading waypoints to drone...', 'info');
-            const uploadResponse = await fetch(`http://localhost:5000/drone/${droneId}/mission/upload`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ waypoints })
-            });
+            this.addAlert('📤 Uploading waypoints to drone...', 'info');
+            console.log(`Uploading ${waypoints.length} waypoints to drone ${droneId}`);
+            
+            let uploadResponse;
+            try {
+                uploadResponse = await fetch(`http://localhost:5000/drone/${droneId}/mission/upload`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ waypoints })
+                });
+            } catch (fetchError) {
+                console.error('Network error during mission upload:', fetchError);
+                const errorMsg = '❌ Cannot connect to PyMAVLink service!\n\nPlease ensure:\n1. PyMAVLink service is running on port 5000\n2. Run: python external-services/pymavlink_service.py\n3. Or use: ./start-pymavlink.sh';
+                alert(errorMsg);
+                throw new Error(`Cannot connect to PyMAVLink service. Is it running on port 5000?`);
+            }
             
             if (!uploadResponse.ok) {
-                throw new Error('Failed to upload mission to drone');
+                const errorText = await uploadResponse.text();
+                console.error('Upload response not OK:', errorText);
+                const errorMsg = `❌ Failed to upload mission!\n\nHTTP ${uploadResponse.status}\n\nCheck console for details.`;
+                alert(errorMsg);
+                throw new Error(`Failed to upload mission (HTTP ${uploadResponse.status})`);
             }
             
             const uploadResult = await uploadResponse.json();
+            console.log('Upload result:', uploadResult);
             if (!uploadResult.success) {
                 throw new Error('Mission upload returned failure');
             }
             
-            this.addAlert(` ${uploadResult.waypoint_count} waypoints uploaded to drone`, 'success');
+            this.addAlert(`✅ ${uploadResult.waypoint_count} waypoints uploaded to drone`, 'success');
             
             // ARM the drone if not already armed
             this.addAlert('🔧 Arming drone...', 'info');
@@ -1235,26 +1274,38 @@ class MissionControl {
             const armResult = await armResponse.json();
             
             if (armResult.success) {
-                this.addAlert(' Drone armed', 'success');
+                this.addAlert('✅ Drone armed successfully', 'success');
             } else {
-                this.addAlert('Failed to arm drone. Check GPS lock and pre-arm checks.', 'error');
+                this.addAlert('❌ Failed to arm drone!', 'error');
+                this.addAlert('⚠️ Pre-arm checks failed. Common issues:', 'warning');
+                this.addAlert('• GPS: Need 3D fix with 8+ satellites', 'info');
+                this.addAlert('• Battery: Check voltage is sufficient', 'info');
+                this.addAlert('• Compass: Ensure proper calibration', 'info');
+                this.addAlert('• Safety: Check all safety switches', 'info');
+                this.addAlert('• RC: Verify RC connection if required', 'info');
+                
+                const errorMsg = '❌ Failed to ARM drone!\n\nPre-arm checks failed.\n\nCommon issues:\n• GPS: Need 3D fix with 8+ satellites\n• Battery: Check voltage is sufficient\n• Compass: Ensure proper calibration\n• Safety: Check all safety switches\n• RC: Verify RC connection if required';
+                alert(errorMsg);
                 return;
             }
             
             await this.sleep(2000); // Wait for arm to settle
             
-            // Start mission (will automatically set AUTO mode)
-            this.addAlert('Starting mission execution...', 'info');
+            // Start mission (will automatically set GUIDED then AUTO mode)
+            this.addAlert('🚀 Starting mission execution...', 'info');
             const startResponse = await fetch(`http://localhost:5000/drone/${droneId}/mission/start`, {
                 method: 'POST'
             });
             const startResult = await startResponse.json();
             
             if (!startResult.success) {
+                const errorMsg = '❌ Failed to start mission!\n\nThe drone may not be ready or in wrong flight mode.';
+                alert(errorMsg);
                 throw new Error('Failed to start mission');
             }
             
             this.addAlert(' Mission ACTIVE! Drone executing waypoints...', 'success');
+            alert('✅ Mission Started Successfully!\n\nThe drone will now:\n1. Takeoff to altitude\n2. Execute waypoints\n3. Complete survey mission\n\nMonitor progress on the dashboard.');
             this.updateMissionStatus('active');
             
             // Enable control buttons
@@ -1279,8 +1330,24 @@ class MissionControl {
             }, 1000);
             
         } catch (error) {
-            console.error('Automated mission error:', error);
-            this.addAlert(` Mission start failed: ${error.message}`, 'error');
+            console.error('❌ Automated mission error:', error);
+            this.addAlert(`❌ Mission start failed: ${error.message}`, 'error');
+            
+            // Show alert popup for errors that might not have been caught earlier
+            if (!error.message.includes('PyMAVLink') && !error.message.includes('upload') && !error.message.includes('ARM')) {
+                alert(`❌ Mission Error!\n\n${error.message}`);
+            }
+            
+            // Re-enable start button on error
+            document.getElementById('startMission').disabled = false;
+            document.getElementById('pauseMission').disabled = true;
+            document.getElementById('stopMission').disabled = true;
+            
+            // Stop mission timer if it was started
+            if (this.missionInterval) {
+                clearInterval(this.missionInterval);
+                this.missionInterval = null;
+            }
         }
     }
     
