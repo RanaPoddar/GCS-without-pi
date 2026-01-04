@@ -58,7 +58,11 @@ router.post('/upload_kml', uploadKML.single('kml'), async (req, res) => {
     const plannerPath = path.join(__dirname, '..', 'kml_mission_planner.py');
     const outputPath = path.join(config.KML_UPLOADS_DIR, `mission_${Date.now()}.json`);
 
-    const venvPython = path.join(__dirname, '..', '..', '.venv', 'bin', 'python');
+    // Detect OS and use correct Python path
+    const isWindows = process.platform === 'win32';
+    const venvPython = isWindows 
+      ? path.join(__dirname, '..', 'myvenv', 'Scripts', 'python.exe')
+      : path.join(__dirname, '..', 'myvenv', 'bin', 'python');
     const command = `"${venvPython}" "${plannerPath}" "${kmlPath}" -a ${altitude} -s ${speed} --output "${outputPath}"`;
     
     logger.info(`🔧 Executing: ${command}`);
