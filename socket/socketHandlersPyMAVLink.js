@@ -207,6 +207,18 @@ function setupSocketHandlers(io) {
         logger.error(` Failed to reconnect Drone ${drone_id}: ${error.message}`);
       }
     });
+    
+    // Sync with PyMAVLink service (detect already-connected drones)
+    socket.on('sync_drones', async () => {
+      logger.info('🔄 Manual sync requested');
+      try {
+        await pixhawkService.syncConnectedDrones(io);
+        socket.emit('sync_complete', { success: true });
+      } catch (error) {
+        logger.error(`Sync failed: ${error.message}`);
+        socket.emit('sync_complete', { success: false, error: error.message });
+      }
+    });
 
     // ========================================
     //      Mission Detection & Image Capture |

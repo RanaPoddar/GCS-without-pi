@@ -38,8 +38,8 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # Verify shapely installation (critical for KML processing)
-Write-Host "🔍 Verifying shapely installation..." -ForegroundColor Yellow
-& ".\myvenv\Scripts\python.exe" -c "import shapely; print(f'✅ Shapely version: {shapely.__version__}')" 2>$null
+Write-Host " Verifying shapely installation..." -ForegroundColor Yellow
+& ".\myvenv\Scripts\python.exe" -c "import shapely; print(f' Shapely version: {shapely.__version__}')" 2>$null
 if ($LASTEXITCODE -ne 0) {
     Write-Host " Shapely not installed correctly!" -ForegroundColor Red
     Write-Host "Installing shapely separately..." -ForegroundColor Yellow

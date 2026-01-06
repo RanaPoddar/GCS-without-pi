@@ -47,12 +47,14 @@
                         <span class="drone-status-indicator" id="drone1StatusIndicator">●</span>
                         <span class="drone-status-text" id="drone1StatusText">Disconnected</span>
                         <button class="reconnect-btn" id="reconnectDrone1" title="Reconnect Drone 1">⟲</button>
+                        <button class="simulate-btn" id="simulateDrone1" title="Test Mode (No Hardware)">🎮</button>
                     </div>
                     <div class="drone-connection-item">
                         <span class="drone-label">Drone 2</span>
                         <span class="drone-status-indicator" id="drone2StatusIndicator">●</span>
                         <span class="drone-status-text" id="drone2StatusText">Disconnected</span>
                         <button class="reconnect-btn" id="reconnectDrone2" title="Reconnect Drone 2">⟲</button>
+                        <button class="simulate-btn" id="simulateDrone2" title="Test Mode (No Hardware)">🎮</button>
                     </div>
                 </div>
                 <div class="connection-status" id="connectionStatus">
@@ -226,6 +228,21 @@
                                 <span class="stat-label">Elapsed:</span>
                                 <span class="stat-value" id="elapsedTime">00:00</span>
                             </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- System Messages Console -->
+                <div class="panel-section">
+                    <h3 class="section-title">
+                        <span class="section-icon">💬</span>
+                        System Messages
+                        <button class="clear-console-btn" id="clearConsole" title="Clear messages">🗑️</button>
+                    </h3>
+                    <div class="system-console" id="systemConsole">
+                        <div class="console-message console-info">
+                            <span class="console-time">00:00:00</span>
+                            <span class="console-text">System initialized</span>
                         </div>
                     </div>
                 </div>
