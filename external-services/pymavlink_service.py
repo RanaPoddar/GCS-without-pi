@@ -483,7 +483,7 @@ class DroneConnection:
         return {'success': False, 'error': 'Disarm failed after 3 attempts'}
     
     def set_mode(self, mode_name):
-        """Set flight mode with HEARTBEAT verification (or simulate)"""
+        """Set flight mode using Mission Planner's exact method: DO_SET_MODE command + SET_MODE message (twice)"""
         try:
             if self.simulation:
                 logger.info(f" Simulating mode change to {mode_name} for Drone {self.drone_id}")
@@ -498,67 +498,54 @@ class DroneConnection:
                 return False
             
             mode_id = self.master.mode_mapping()[mode_name.upper()]
-            logger.info(f"Setting mode {mode_name} (ID={mode_id}) for Drone {self.drone_id}")
+            logger.info(f"🚁 Setting mode {mode_name} (ID={mode_id}) for Drone {self.drone_id} - Mission Planner method")
             
-            # Use command_long_send for proper MAV_CMD_DO_SET_MODE with ACK
-            for attempt in range(3):
-                # Send DO_SET_MODE command (MAV_CMD_DO_SET_MODE = 176)
-                self.master.mav.command_long_send(
-                    self.master.target_system,
-                    self.master.target_component,
-                    mavutil.mavlink.MAV_CMD_DO_SET_MODE,
-                    0,  # confirmation
-                    1,  # mode parameter 1 (1 = custom mode)
-                    mode_id,  # mode parameter 2 (the mode ID)
-                    0, 0, 0, 0, 0  # unused params
-                )
-                
-                # Wait for COMMAND_ACK
-                ack_received = False
-                for i in range(10):  # Wait up to 2 seconds (10 x 0.2s timeout)
-                    msg = self.master.recv_match(type='COMMAND_ACK', timeout=0.2)
-                    if msg and msg.command == mavutil.mavlink.MAV_CMD_DO_SET_MODE:
-                        ack_received = True
-                        if msg.result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
-                            logger.info(f"✅ COMMAND_ACK received for {mode_name}")
-                            # Now verify by reading HEARTBEAT messages directly
-                            # (don't rely on telemetry loop which may be delayed)
-                            mode_verified = False
-                            for j in range(15):  # Try up to 3 seconds
-                                hb = self.master.recv_match(type='HEARTBEAT', timeout=0.2)
-                                if hb:
-                                    current_mode = mavutil.mode_string_v10(hb)
-                                    if mode_name.upper() in current_mode.upper():
-                                        logger.info(f"✅ Mode VERIFIED: {mode_name} (via HEARTBEAT)")
-                                        mode_verified = True
-                                        break
-                                time.sleep(0.1)
-                            
-                            if mode_verified:
-                                return True
-                            else:
-                                logger.warning(f"Mode ACK received but HEARTBEAT not updated yet (attempt {attempt + 1}/3)")
-                                break  # Retry with next attempt
-                        else:
-                            # result=4 (FAILED) typically means drone is ALREADY in that mode
-                            logger.warning(f"Mode command rejected (result={msg.result}) for Drone {self.drone_id}")
-                            
-                            # SPECIAL CASE: For AUTO mode, result=4 almost always means "already in AUTO"
-                            # This happens after mission upload when drone auto-enters AUTO mode
-                            # Treating result=4 for AUTO as SUCCESS
-                            if mode_name.upper() == 'AUTO' and msg.result == 4:
-                                logger.info(f"✅ AUTO mode rejected with result=4 → Drone is already in AUTO mode (mission active)")
-                                return True
-                            
-                            break  # Exit loop, will retry for other modes
-                    time.sleep(0.1)
-                
-                if not ack_received and attempt < 2:
-                    logger.warning(f"No COMMAND_ACK for mode {mode_name} (attempt {attempt + 1}/3), retrying...")
-                    time.sleep(0.5)
+            # **MISSION PLANNER METHOD: 3-step process**
+            # Step 1: Send MAV_CMD_DO_SET_MODE command
+            self.master.mav.command_long_send(
+                self.master.target_system,
+                self.master.target_component,
+                mavutil.mavlink.MAV_CMD_DO_SET_MODE,
+                0,  # confirmation
+                1,  # param1: mode flag (1 = custom mode enabled)
+                mode_id,  # param2: custom mode value
+                0, 0, 0, 0, 0  # unused params
+            )
+            logger.info(f"📤 Sent MAV_CMD_DO_SET_MODE command")
             
-            logger.error(f"Failed to set mode {mode_name} after 3 attempts for Drone {self.drone_id}")
+            # Step 2: Send SET_MODE message (first time)
+            self.master.mav.set_mode_send(
+                self.master.target_system,
+                mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
+                mode_id
+            )
+            logger.info(f"📤 Sent SET_MODE message #1")
+            
+            # Step 3: Wait 10ms and send SET_MODE message again (Mission Planner does this!)
+            time.sleep(0.01)  # 10ms delay like Mission Planner
+            self.master.mav.set_mode_send(
+                self.master.target_system,
+                mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
+                mode_id
+            )
+            logger.info(f"📤 Sent SET_MODE message #2 (10ms after first)")
+            
+            # Now verify mode change via HEARTBEAT
+            mode_verified = False
+            for attempt in range(20):  # Try up to 4 seconds (20 x 0.2s)
+                hb = self.master.recv_match(type='HEARTBEAT', timeout=0.2)
+                if hb:
+                    current_mode = mavutil.mode_string_v10(hb)
+                    if mode_name.upper() in current_mode.upper():
+                        logger.info(f"✅ Mode VERIFIED: {mode_name} (via HEARTBEAT)")
+                        mode_verified = True
+                        return True
+                time.sleep(0.05)
+            
+            # If we get here, mode wasn't verified
+            logger.warning(f"⚠️ Mode {mode_name} not verified after 4 seconds for Drone {self.drone_id}")
             return False
+            
         except Exception as e:
             logger.error(f"Failed to set mode for Drone {self.drone_id}: {e}")
             return False
@@ -703,6 +690,7 @@ class DroneConnection:
             logger.info(f"  1. Takeoff at current position ({current_lat:.6f}, {current_lon:.6f}) to {survey_alt}m")
             logger.info(f"  2. Navigate to first survey waypoint ({first_lat:.6f}, {first_lon:.6f})")
             logger.info(f"  3. Execute {len(waypoints)} survey waypoints")
+            logger.info(f"  4. Return to Launch (RTL)")
             
             # Waypoint 0: Takeoff at current position to mission altitude
             # (drone stays at current location, just climbs to altitude)
@@ -722,10 +710,19 @@ class DroneConnection:
                 'command': mavutil.mavlink.MAV_CMD_NAV_WAYPOINT
             }
             
-            # Prepend takeoff and navigation waypoints to mission
-            full_mission = [takeoff_waypoint, nav_to_survey] + waypoints
+            # Last Waypoint: Return to Launch (RTL)
+            # Note: RTL command uses current position, lat/lon are ignored but required for protocol
+            rtl_waypoint = {
+                'latitude': current_lat,
+                'longitude': current_lon,
+                'altitude': survey_alt,  # RTL altitude (will use parameter RTL_ALT instead)
+                'command': mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH
+            }
             
-            logger.info(f" Uploading {len(full_mission)} waypoints (TAKEOFF + NAV + {len(waypoints)} survey) to Drone {self.drone_id}")
+            # Build complete mission: TAKEOFF + NAV_TO_START + SURVEY_WAYPOINTS + RTL
+            full_mission = [takeoff_waypoint, nav_to_survey] + waypoints + [rtl_waypoint]
+            
+            logger.info(f" Uploading {len(full_mission)} waypoints (TAKEOFF + NAV + {len(waypoints)} survey + RTL) to Drone {self.drone_id}")
             
             if self.simulation:
                 logger.info(f" SIMULATION: Pretending to upload {len(full_mission)} waypoints...")
@@ -738,12 +735,21 @@ class DroneConnection:
                 logger.info(f" Simulated mission upload successful for Drone {self.drone_id}")
                 return True
             
-            # Clear existing mission
-            self.master.waypoint_clear_all_send()
+            # Clear existing mission (modern MAVLink protocol)
+            self.master.mav.mission_clear_all_send(
+                self.master.target_system,
+                self.master.target_component,
+                mavutil.mavlink.MAV_MISSION_TYPE_MISSION
+            )
             time.sleep(0.5)
             
-            # Send waypoint count
-            self.master.waypoint_count_send(len(full_mission))
+            # Send waypoint count (modern MAVLink protocol)
+            self.master.mav.mission_count_send(
+                self.master.target_system,
+                self.master.target_component,
+                len(full_mission),
+                mavutil.mavlink.MAV_MISSION_TYPE_MISSION
+            )
             time.sleep(0.3)
             
             # Upload each waypoint using MAVLink 2 (mission_item_int)
@@ -830,6 +836,22 @@ class DroneConnection:
                     return {'success': False, 'error': 'Failed to set GUIDED mode. Check drone status.'}
                 time.sleep(0.5)
             
+            # CRITICAL: Set current mission item to 0 BEFORE switching to AUTO mode
+            logger.info(f" Setting mission start waypoint to 0...")
+            self.master.mav.mission_set_current_send(
+                self.master.target_system,
+                self.master.target_component,
+                0  # Start from waypoint 0 (TAKEOFF)
+            )
+            time.sleep(0.5)
+            
+            # Verify mission set_current was accepted
+            msg = self.master.recv_match(type='MISSION_CURRENT', blocking=True, timeout=2.0)
+            if msg and msg.seq == 0:
+                logger.info(f"✅ Mission current waypoint set to 0")
+            else:
+                logger.warning(f"⚠️ Could not confirm current waypoint set to 0")
+            
             # Try to set AUTO mode
             logger.info(f" Setting AUTO mode to start mission for Drone {self.drone_id}...")
             success = self.set_mode('AUTO')
@@ -842,8 +864,25 @@ class DroneConnection:
                     self.master.target_component,
                     mavutil.mavlink.MAV_CMD_MISSION_START,
                     0,  # confirmation
-                    0, 0, 0, 0, 0, 0, 0  # params
+                    0, 0, 0, 0, 0, 0, 0  # params (all unused)
                 )
+                
+                # Wait for MAV_CMD_MISSION_START acknowledgment
+                ack_received = False
+                for i in range(5):
+                    msg = self.master.recv_match(type='COMMAND_ACK', timeout=0.5)
+                    if msg and msg.command == mavutil.mavlink.MAV_CMD_MISSION_START:
+                        if msg.result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
+                            logger.info(f"✅ MAV_CMD_MISSION_START accepted")
+                            ack_received = True
+                            break
+                        else:
+                            logger.error(f"❌ MAV_CMD_MISSION_START rejected: result={msg.result}")
+                            return {'success': False, 'error': f'Mission start command rejected by autopilot (result={msg.result})'}
+                
+                if not ack_received:
+                    logger.warning(f"⚠️ No ACK for MAV_CMD_MISSION_START, but continuing...")
+                
                 time.sleep(0.5)
             
             # CRITICAL: Verify AUTO mode is actually set via HEARTBEAT (not telemetry)
@@ -866,13 +905,8 @@ class DroneConnection:
                 logger.error(f"   Try: 1) Check GCS safety settings, 2) Ensure mission fully uploaded, 3) Manually switch to AUTO")
                 return {'success': False, 'error': 'Could not verify AUTO mode after multiple attempts. Drone may have rejected mode change.'}
             
-            # Request MISSION_CURRENT to verify mission execution
-            logger.info(f" Requesting MISSION_CURRENT to verify mission execution...")
-            self.master.mav.mission_request_int_send(
-                self.master.target_system,
-                self.master.target_component,
-                0  # Request current waypoint
-            )
+            # Verify mission is executing by checking MISSION_CURRENT
+            logger.info(f" Verifying mission execution...")
             
             mission_confirmed = False
             for i in range(5):
@@ -906,22 +940,86 @@ class DroneConnection:
             return {'success': False, 'error': f'Mission start exception: {str(e)}'}
     
     def pause_mission(self):
-        """Pause mission by switching to LOITER"""
+        """Pause mission using MAV_CMD_DO_PAUSE_CONTINUE"""
         try:
             logger.info(f" Pausing mission for Drone {self.drone_id}")
-            return self.set_mode('LOITER')
+            
+            if self.simulation:
+                logger.info(f" Simulating mission PAUSE for Drone {self.drone_id}")
+                self.mission_active = False
+                return True
+            
+            # Send MAV_CMD_DO_PAUSE_CONTINUE with param1=0 (pause)
+            self.master.mav.command_long_send(
+                self.master.target_system,
+                self.master.target_component,
+                mavutil.mavlink.MAV_CMD_DO_PAUSE_CONTINUE,  # 193
+                0,  # confirmation
+                0,  # param1: 0=pause
+                0, 0, 0, 0, 0, 0  # unused params
+            )
+            
+            # Wait for acknowledgment
+            ack_received = False
+            for i in range(5):
+                msg = self.master.recv_match(type='COMMAND_ACK', timeout=0.5)
+                if msg and msg.command == mavutil.mavlink.MAV_CMD_DO_PAUSE_CONTINUE:
+                    if msg.result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
+                        logger.info(f"✅ Mission paused for Drone {self.drone_id}")
+                        self.mission_active = False
+                        ack_received = True
+                        return True
+                    else:
+                        logger.error(f"❌ Pause command rejected: result={msg.result}")
+                        return False
+            
+            if not ack_received:
+                logger.warning(f"⚠️ No ACK for pause command, but command was sent")
+                return True
+                
         except Exception as e:
             logger.error(f"Failed to pause mission: {e}")
             return False
     
     def resume_mission(self):
-        """Resume mission by switching back to AUTO"""
+        """Resume mission using MAV_CMD_DO_PAUSE_CONTINUE"""
         try:
             logger.info(f" Resuming mission for Drone {self.drone_id}")
-            success = self.set_mode('AUTO')
-            if success:
+            
+            if self.simulation:
+                logger.info(f" Simulating mission RESUME for Drone {self.drone_id}")
                 self.mission_active = True
-            return success
+                return True
+            
+            # Send MAV_CMD_DO_PAUSE_CONTINUE with param1=1 (continue/resume)
+            self.master.mav.command_long_send(
+                self.master.target_system,
+                self.master.target_component,
+                mavutil.mavlink.MAV_CMD_DO_PAUSE_CONTINUE,  # 193
+                0,  # confirmation
+                1,  # param1: 1=continue/resume
+                0, 0, 0, 0, 0, 0  # unused params
+            )
+            
+            # Wait for acknowledgment
+            ack_received = False
+            for i in range(5):
+                msg = self.master.recv_match(type='COMMAND_ACK', timeout=0.5)
+                if msg and msg.command == mavutil.mavlink.MAV_CMD_DO_PAUSE_CONTINUE:
+                    if msg.result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
+                        logger.info(f"✅ Mission resumed for Drone {self.drone_id}")
+                        self.mission_active = True
+                        ack_received = True
+                        return True
+                    else:
+                        logger.error(f"❌ Resume command rejected: result={msg.result}")
+                        return False
+            
+            if not ack_received:
+                logger.warning(f"⚠️ No ACK for resume command, but command was sent")
+                self.mission_active = True
+                return True
+                
         except Exception as e:
             logger.error(f"Failed to resume mission: {e}")
             return False

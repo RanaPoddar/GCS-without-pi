@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mission Upload Debug Tool</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 5px;
+        }
+        
+        .header p {
+            opacity: 0.9;
+            font-size: 14px;
+        }
+        
+        .content {
+            padding: 30px;
+        }
+        
+        .section {
+            margin-bottom: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .section h2 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 20px;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: #555;
+            font-weight: 600;
+        }
+        
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+        
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .form-group textarea {
+            font-family: 'Courier New', monospace;
+            min-height: 150px;
+        }
+        
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-right: 10px;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-success {
+            background: #28a745;
+            color: white;
+        }
+        
+        .btn-success:hover {
+            background: #218838;
+        }
+        
+        .btn-warning {
+            background: #ffc107;
+            color: #333;
+        }
+        
+        .btn-warning:hover {
+            background: #e0a800;
+        }
+        
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+        
+        .btn-danger:hover {
+            background: #c82333;
+        }
+        
+        .status-box {
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 15px;
+        }
+        
+        .status-connected {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .status-disconnected {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .log-container {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 15px;
+            border-radius: 5px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .log-entry {
+            margin-bottom: 5px;
+            padding: 5px;
+        }
+        
+        .log-info {
+            color: #4fc3f7;
+        }
+        
+        .log-success {
+            color: #66bb6a;
+        }
+        
+        .log-error {
+            color: #ef5350;
+        }
+        
+        .log-warning {
+            color: #ffca28;
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        
+        .stat-card {
+            background: white;
+            padding: 15px;
+            border-radius: 5px;
+            border: 2px solid #e0e0e0;
+            text-align: center;
+        }
+        
+        .stat-label {
+            color: #666;
+            font-size: 12px;
+            margin-bottom: 5px;
+        }
+        
+        .stat-value {
+            color: #333;
+            font-size: 24px;
+            font-weight: bold;
+        }
+        
+        .waypoint-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+        
+        .waypoint-table th,
+        .waypoint-table td {
+            padding: 10px;
+            border: 1px solid #ddd;
+            text-align: left;
+        }
+        
+        .waypoint-table th {
+            background: #667eea;
+            color: white;
+            font-weight: 600;
+        }
+        
+        .waypoint-table tr:nth-child(even) {
+            background: #f8f9fa;
+        }
+        
+        .hidden {
+            display: none;
+        }
+        
+        .file-upload {
+            border: 2px dashed #667eea;
+            padding: 20px;
+            text-align: center;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .file-upload:hover {
+            background: #f0f4ff;
+            border-color: #764ba2;
+        }
+        
+        .file-upload input[type="file"] {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🐛 Mission Upload Debug Tool</h1>
+            <p>Direct MAVLink Mission Testing & Debugging Interface</p>
+        </div>
+        
+        <div class="content">
+            <!-- Connection Status -->
+            <div class="section">
+                <h2>📡 Connection Status</h2>
+                <div class="form-group">
+                    <label>Drone ID:</label>
+                    <select id="droneId">
+                        <option value="1">Drone 1</option>
+                        <option value="2">Drone 2</option>
+                        <option value="3">Drone 3</option>
+                    </select>
+                </div>
+                <button class="btn btn-primary" onclick="checkConnection()">Check Connection</button>
+                <div id="connectionStatus" class="status-box status-disconnected" style="display:none;">
+                    <strong>Status:</strong> <span id="statusText">Checking...</span>
+                </div>
+            </div>
+            
+            <!-- Mission Input Methods -->
+            <div class="section">
+                <h2>📋 Mission Input</h2>
+                
+                <!-- Method 1: JSON Waypoints -->
+                <div class="form-group">
+                    <label>Method 1: Paste JSON Waypoints</label>
+                    <textarea id="waypointsJson" placeholder='[
+  {"seq": 0, "lat": 23.295, "lon": 85.310, "alt": 15.0},
+  {"seq": 1, "lat": 23.296, "lon": 85.311, "alt": 15.0}
+]'></textarea>
+                    <button class="btn btn-primary" onclick="loadFromJson()">Load from JSON</button>
+                </div>
+                
+                <!-- Method 2: Upload File -->
+                <div class="form-group">
+                    <label>Method 2: Upload Mission File (.json or .waypoints)</label>
+                    <div class="file-upload" onclick="document.getElementById('missionFile').click()">
+                        <input type="file" id="missionFile" accept=".json,.waypoints" onchange="handleFileUpload(event)">
+                        <p>📁 Click to select or drag & drop mission file</p>
+                        <small>Supports: JSON mission files, Mission Planner .waypoints</small>
+                    </div>
+                </div>
+                
+                <!-- Method 3: Manual Entry -->
+                <div class="form-group">
+                    <label>Method 3: Quick Test Pattern</label>
+                    <button class="btn btn-warning" onclick="generateTestPattern()">Generate 4-Point Square Pattern</button>
+                </div>
+            </div>
+            
+            <!-- Loaded Waypoints Display -->
+            <div class="section" id="waypointsSection" style="display:none;">
+                <h2>✈️ Loaded Waypoints</h2>
+                <div class="grid">
+                    <div class="stat-card">
+                        <div class="stat-label">Total Waypoints</div>
+                        <div class="stat-value" id="wpCount">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">First Point</div>
+                        <div class="stat-value" id="firstPoint">--</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Last Point</div>
+                        <div class="stat-value" id="lastPoint">--</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Altitude</div>
+                        <div class="stat-value" id="altitude">--</div>
+                    </div>
+                </div>
+                <table class="waypoint-table">
+                    <thead>
+                        <tr>
+                            <th>Seq</th>
+                            <th>Latitude</th>
+                            <th>Longitude</th>
+                            <th>Altitude (m)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="waypointsTableBody">
+                    </tbody>
+                </table>
+            </div>
+            
+            <!-- Mission Upload Controls -->
+            <div class="section">
+                <h2>🚀 Mission Upload</h2>
+                <button class="btn btn-success" onclick="uploadMission()" id="uploadBtn" disabled>📤 Upload Mission to Drone</button>
+                <button class="btn btn-primary" onclick="startMission()" id="startBtn" disabled>▶️ Start Mission (AUTO Mode)</button>
+                <button class="btn btn-danger" onclick="stopMission()">⏹️ Stop Mission (RTL)</button>
+            </div>
+            
+            <!-- Debug Log -->
+            <div class="section">
+                <h2>📝 Debug Log</h2>
+                <button class="btn btn-warning" onclick="clearLog()">Clear Log</button>
+                <div class="log-container" id="logContainer">
+                    <div class="log-entry log-info">🐛 Debug tool initialized. Ready to test mission uploads.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let currentWaypoints = [];
+        
+        function log(message, type = 'info') {
+            const logContainer = document.getElementById('logContainer');
+            const timestamp = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            entry.textContent = `[${timestamp}] ${message}`;
+            logContainer.appendChild(entry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+        
+        function clearLog() {
+            document.getElementById('logContainer').innerHTML = '';
+            log('Log cleared', 'info');
+        }
+        
+        async function checkConnection() {
+            const droneId = document.getElementById('droneId').value;
+            log(`Checking connection to Drone ${droneId}...`, 'info');
+            
+            try {
+                const response = await fetch(`http://localhost:5000/drone/${droneId}/status`);
+                const data = await response.json();
+                
+                const statusDiv = document.getElementById('connectionStatus');
+                const statusText = document.getElementById('statusText');
+                statusDiv.style.display = 'block';
+                
+                if (data.connected) {
+                    statusDiv.className = 'status-box status-connected';
+                    statusText.textContent = `Connected - Mode: ${data.flight_mode}, Armed: ${data.armed}`;
+                    log(`✅ Drone ${droneId} connected - ${data.flight_mode}`, 'success');
+                } else {
+                    statusDiv.className = 'status-box status-disconnected';
+                    statusText.textContent = 'Disconnected';
+                    log(`❌ Drone ${droneId} not connected`, 'error');
+                }
+            } catch (error) {
+                log(`❌ Error checking connection: ${error.message}`, 'error');
+                const statusDiv = document.getElementById('connectionStatus');
+                statusDiv.style.display = 'block';
+                statusDiv.className = 'status-box status-disconnected';
+                document.getElementById('statusText').textContent = 'PyMAVLink service not reachable';
+            }
+        }
+        
+        function loadFromJson() {
+            const jsonText = document.getElementById('waypointsJson').value.trim();
+            if (!jsonText) {
+                log('❌ No JSON data provided', 'error');
+                return;
+            }
+            
+            try {
+                const waypoints = JSON.parse(jsonText);
+                if (!Array.isArray(waypoints)) {
+                    throw new Error('JSON must be an array of waypoints');
+                }
+                
+                currentWaypoints = normalizeWaypoints(waypoints);
+                displayWaypoints();
+                log(`✅ Loaded ${currentWaypoints.length} waypoints from JSON`, 'success');
+            } catch (error) {
+                log(`❌ Invalid JSON: ${error.message}`, 'error');
+            }
+        }
+        
+        function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            log(`📁 Reading file: ${file.name}`, 'info');
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const content = e.target.result;
+                
+                if (file.name.endsWith('.json')) {
+                    parseJsonFile(content, file.name);
+                } else if (file.name.endsWith('.waypoints')) {
+                    parseWaypointsFile(content, file.name);
+                } else {
+                    log('❌ Unsupported file format', 'error');
+                }
+            };
+            reader.readAsText(file);
+        }
+        
+        function parseJsonFile(content, filename) {
+            try {
+                const data = JSON.parse(content);
+                let waypoints;
+                
+                // Handle different JSON formats
+                if (data.waypoints && Array.isArray(data.waypoints)) {
+                    waypoints = data.waypoints;
+                } else if (Array.isArray(data)) {
+                    waypoints = data;
+                } else {
+                    throw new Error('JSON must contain waypoints array');
+                }
+                
+                currentWaypoints = normalizeWaypoints(waypoints);
+                displayWaypoints();
+                log(`✅ Loaded ${currentWaypoints.length} waypoints from ${filename}`, 'success');
+            } catch (error) {
+                log(`❌ Error parsing ${filename}: ${error.message}`, 'error');
+            }
+        }
+        
+        function parseWaypointsFile(content, filename) {
+            try {
+                const lines = content.split('\n');
+                const waypoints = [];
+                
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i].trim();
+                    if (!line || line.startsWith('QGC')) continue;
+                    
+                    const parts = line.split(/\s+/);
+                    if (parts.length < 12) continue;
+                    
+                    const seq = parseInt(parts[0]);
+                    const lat = parseFloat(parts[8]);
+                    const lon = parseFloat(parts[9]);
+                    const alt = parseFloat(parts[10]);
+                    
+                    waypoints.push({ seq, lat, lon, alt });
+                }
+                
+                currentWaypoints = waypoints;
+                displayWaypoints();
+                log(`✅ Loaded ${currentWaypoints.length} waypoints from Mission Planner file`, 'success');
+            } catch (error) {
+                log(`❌ Error parsing .waypoints file: ${error.message}`, 'error');
+            }
+        }
+        
+        function normalizeWaypoints(waypoints) {
+            return waypoints.map((wp, index) => ({
+                seq: wp.seq !== undefined ? wp.seq : index,
+                lat: wp.lat || wp.latitude || 0,
+                lon: wp.lon || wp.longitude || 0,
+                alt: wp.alt || wp.altitude || 15.0
+            }));
+        }
+        
+        function generateTestPattern() {
+            // Generate a small square pattern around a default location
+            const baseLat = 23.295;
+            const baseLon = 85.310;
+            const offset = 0.0001; // ~11 meters
+            
+            currentWaypoints = [
+                { seq: 0, lat: baseLat, lon: baseLon, alt: 15.0 },
+                { seq: 1, lat: baseLat + offset, lon: baseLon, alt: 15.0 },
+                { seq: 2, lat: baseLat + offset, lon: baseLon + offset, alt: 15.0 },
+                { seq: 3, lat: baseLat, lon: baseLon + offset, alt: 15.0 }
+            ];
+            
+            displayWaypoints();
+            log('✅ Generated 4-point square test pattern', 'success');
+        }
+        
+        function displayWaypoints() {
+            if (currentWaypoints.length === 0) {
+                document.getElementById('waypointsSection').style.display = 'none';
+                document.getElementById('uploadBtn').disabled = true;
+                return;
+            }
+            
+            document.getElementById('waypointsSection').style.display = 'block';
+            document.getElementById('uploadBtn').disabled = false;
+            
+            // Update stats
+            document.getElementById('wpCount').textContent = currentWaypoints.length;
+            document.getElementById('firstPoint').textContent = 
+                `${currentWaypoints[0].lat.toFixed(4)}, ${currentWaypoints[0].lon.toFixed(4)}`;
+            document.getElementById('lastPoint').textContent = 
+                `${currentWaypoints[currentWaypoints.length-1].lat.toFixed(4)}, ${currentWaypoints[currentWaypoints.length-1].lon.toFixed(4)}`;
+            document.getElementById('altitude').textContent = `${currentWaypoints[0].alt.toFixed(1)}m`;
+            
+            // Update table
+            const tbody = document.getElementById('waypointsTableBody');
+            tbody.innerHTML = '';
+            
+            currentWaypoints.forEach(wp => {
+                const row = tbody.insertRow();
+                row.insertCell(0).textContent = wp.seq;
+                row.insertCell(1).textContent = wp.lat.toFixed(6);
+                row.insertCell(2).textContent = wp.lon.toFixed(6);
+                row.insertCell(3).textContent = wp.alt.toFixed(1);
+            });
+        }
+        
+        async function uploadMission() {
+            if (currentWaypoints.length === 0) {
+                log('❌ No waypoints loaded', 'error');
+                return;
+            }
+            
+            const droneId = document.getElementById('droneId').value;
+            log(`📤 Uploading ${currentWaypoints.length} waypoints to Drone ${droneId}...`, 'info');
+            
+            try {
+                const response = await fetch(`http://localhost:5000/drone/${droneId}/mission/upload`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ waypoints: currentWaypoints })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    log(`✅ Mission uploaded successfully! ${data.waypoint_count} waypoints`, 'success');
+                    log(`   (Includes TAKEOFF + NAV_TO_START + ${currentWaypoints.length} survey + RTL)`, 'info');
+                    document.getElementById('startBtn').disabled = false;
+                } else {
+                    log(`❌ Upload failed: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                log(`❌ Upload error: ${error.message}`, 'error');
+            }
+        }
+        
+        async function startMission() {
+            const droneId = document.getElementById('droneId').value;
+            log(`▶️ Starting mission on Drone ${droneId}...`, 'info');
+            
+            try {
+                const response = await fetch(`http://localhost:5000/drone/${droneId}/mission/start`, {
+                    method: 'POST'
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    log('✅ Mission started! Drone in AUTO mode', 'success');
+                } else {
+                    log(`❌ Start failed: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                log(`❌ Start error: ${error.message}`, 'error');
+            }
+        }
+        
+        async function stopMission() {
+            const droneId = document.getElementById('droneId').value;
+            log(`⏹️ Stopping mission and initiating RTL...`, 'warning');
+            
+            try {
+                const response = await fetch(`http://localhost:5000/drone/${droneId}/mission/stop`, {
+                    method: 'POST'
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    log('✅ Mission stopped, RTL initiated', 'success');
+                } else {
+                    log(`❌ Stop failed: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                log(`❌ Stop error: ${error.message}`, 'error');
+            }
+        }
+        
+        // Auto-check connection on load
+        window.onload = function() {
+            setTimeout(checkConnection, 500);
+        };
+    </script>
+</body>
+</html>

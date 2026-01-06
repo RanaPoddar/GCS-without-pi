@@ -38,6 +38,33 @@ const uploadKML = multer({
   }
 });
 
+// Configure multer for waypoint file uploads (Mission Planner format)
+const waypointStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    if (!fs.existsSync(config.KML_UPLOADS_DIR)) {
+      fs.mkdirSync(config.KML_UPLOADS_DIR, { recursive: true });
+    }
+    cb(null, config.KML_UPLOADS_DIR);
+  },
+  filename: (req, file, cb) => {
+    const timestamp = Date.now();
+    cb(null, `${timestamp}_${file.originalname}`);
+  }
+});
+
+const uploadWaypoints = multer({
+  storage: waypointStorage,
+  fileFilter: (req, file, cb) => {
+    if (file.originalname.endsWith('.waypoints') || 
+        file.originalname.endsWith('.json') ||
+        file.mimetype === 'application/json') {
+      cb(null, true);
+    } else {
+      cb(new Error('Only .waypoints or .json files are allowed'));
+    }
+  }
+});
+
 /**
  * POST /api/mission/upload_kml
  * Upload and process KML file to generate mission
@@ -294,6 +321,117 @@ router.get('/missions/:mission_id/detections', (req, res) => {
   }
   
   res.json({ mission_id: missionId, detections, total: detections.length });
+});
+
+/**
+ * POST /api/mission/upload_waypoints
+ * Upload Mission Planner .waypoints file or JSON waypoints file
+ */
+router.post('/upload_waypoints', uploadWaypoints.single('waypoints'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No waypoints file uploaded' });
+    }
+
+    const filePath = req.file.path;
+    const fileName = req.file.originalname;
+    const drone_id = parseInt(req.body.drone_id) || 1;
+
+    logger.info(`📤 Processing waypoints file: ${fileName} for Drone ${drone_id}`);
+
+    let waypoints = [];
+
+    // Parse based on file extension
+    if (fileName.endsWith('.waypoints')) {
+      // Parse Mission Planner format
+      const content = fs.readFileSync(filePath, 'utf8');
+      const lines = content.split('\n');
+      
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (!line || line.startsWith('QGC')) continue;
+        
+        const parts = line.split(/\s+/);
+        if (parts.length < 12) continue;
+        
+        const seq = parseInt(parts[0]);
+        const lat = parseFloat(parts[8]);
+        const lon = parseFloat(parts[9]);
+        const alt = parseFloat(parts[10]);
+        
+        if (!isNaN(lat) && !isNaN(lon) && !isNaN(alt)) {
+          waypoints.push({
+            seq: seq,
+            lat: lat,
+            lon: lon,
+            alt: alt
+          });
+        }
+      }
+      
+      logger.info(`Parsed ${waypoints.length} waypoints from Mission Planner file`);
+      
+    } else if (fileName.endsWith('.json')) {
+      // Parse JSON format
+      const content = fs.readFileSync(filePath, 'utf8');
+      const data = JSON.parse(content);
+      
+      // Handle different JSON formats
+      if (data.waypoints && Array.isArray(data.waypoints)) {
+        waypoints = data.waypoints.map((wp, index) => ({
+          seq: wp.seq !== undefined ? wp.seq : index,
+          lat: wp.lat || wp.latitude || 0,
+          lon: wp.lon || wp.longitude || 0,
+          alt: wp.alt || wp.altitude || 15.0
+        }));
+      } else if (Array.isArray(data)) {
+        waypoints = data.map((wp, index) => ({
+          seq: wp.seq !== undefined ? wp.seq : index,
+          lat: wp.lat || wp.latitude || 0,
+          lon: wp.lon || wp.longitude || 0,
+          alt: wp.alt || wp.altitude || 15.0
+        }));
+      } else {
+        throw new Error('JSON must contain waypoints array');
+      }
+      
+      logger.info(`Parsed ${waypoints.length} waypoints from JSON file`);
+    }
+
+    if (waypoints.length === 0) {
+      return res.status(400).json({ error: 'No valid waypoints found in file' });
+    }
+
+    // Store in pending missions
+    const missionId = `mission_${Date.now()}`;
+    missionService.pendingMissions.set(missionId, {
+      mission_id: missionId,
+      drone_id: drone_id,
+      waypoints_file: fileName,
+      waypoints: waypoints,
+      created_at: new Date().toISOString(),
+      status: 'pending_confirmation'
+    });
+
+    logger.info(`✅ Mission generated: ${waypoints.length} waypoints from ${fileName}`);
+
+    res.json({
+      success: true,
+      mission_id: missionId,
+      mission: {
+        waypoints_count: waypoints.length,
+        waypoints: waypoints,
+        source: fileName
+      }
+    });
+
+  } catch (error) {
+    logger.error(`❌ Waypoints file processing error: ${error}`);
+    res.status(500).json({ 
+      error: 'Failed to process waypoints file', 
+      details: error.message 
+    });
+  }
 });
 
 module.exports = router;
