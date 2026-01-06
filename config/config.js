@@ -31,7 +31,7 @@ const config = {
     },
     {
       drone_id: 2,
-      port: process.env.DRONE2_PORT || '/dev/ttyUSB1',
+      port: process.env.DRONE2_PORT || '/dev/ttyACM0',
       baudRate: parseInt(process.env.DRONE2_BAUD) || 57600
     }
   ],

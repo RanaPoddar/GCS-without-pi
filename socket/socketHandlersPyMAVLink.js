@@ -243,6 +243,23 @@ function setupSocketHandlers(io) {
         io.emit('crop_detection', detectionData);
       }
     });
+
+    // Manual detection trigger (for testing)
+    socket.on('manual_detection', (data) => {
+      logger.info(`📍 Manual detection triggered - Drone ${data.drone_id} at [${data.latitude}, ${data.longitude}]`);
+      logger.info(`   Confidence: ${(data.confidence * 100).toFixed(1)}% | Type: ${data.type}`);
+      
+      // Save detection
+      const detectionData = missionService.saveDetection(data.drone_id, data);
+      
+      if (detectionData) {
+        // Broadcast to all clients
+        io.emit('detection', detectionData);
+        io.emit('crop_detection', detectionData);
+        
+        logger.info(`   Detection broadcasted to all clients`);
+      }
+    });
     
     socket.on('detection_status', (data) => {
       logger.info(`Detection status from Drone ${data.drone_id}: ${data.status}`);

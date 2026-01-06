@@ -4,14 +4,22 @@ KML Mission Planner for NIdar Competition
 Parses KML boundary file and generates survey mission waypoints
 """
 
-
+import sys
 import xml.etree.ElementTree as ET
 import json
 import math
 from pathlib import Path
 from typing import List, Tuple
 import argparse
-from shapely.geometry import Polygon, LineString, Point
+
+# Try to import shapely, provide helpful error if missing
+try:
+    from shapely.geometry import Polygon, LineString, Point
+except ImportError as e:
+    print("ERROR: shapely library is not installed!", file=sys.stderr)
+    print("Please install it with: pip install shapely", file=sys.stderr)
+    print(f"Import error details: {e}", file=sys.stderr)
+    sys.exit(1)
 
 class KMLMissionPlanner:
     """Generate survey mission from KML boundary"""
@@ -270,6 +278,13 @@ def main():
     args = parser.parse_args()
     
     try:
+        # Verify input file exists
+        if not Path(args.kml_file).exists():
+            print(f"ERROR: KML file not found: {args.kml_file}", file=sys.stderr)
+            return 1
+        
+        print(f"Processing KML file: {args.kml_file}", file=sys.stderr)
+        
         # Create planner
         planner = KMLMissionPlanner(
             altitude_m=args.altitude,
@@ -286,10 +301,26 @@ def main():
         # Create mission file
         planner.create_mission_file(waypoints, metadata, args.output)
         
-        print(f"\n Ready to fly! Upload {args.output} to dashboard")
+        print(f"\n✅ Ready to fly! Upload {args.output} to dashboard")
         
+    except ImportError as e:
+        print(f"\n❌ ERROR: Missing Python library: {e}", file=sys.stderr)
+        print("Please install required libraries with: pip install shapely", file=sys.stderr)
+        return 1
+    except FileNotFoundError as e:
+        print(f"\n❌ ERROR: File not found: {e}", file=sys.stderr)
+        return 1
+    except ET.ParseError as e:
+        print(f"\n❌ ERROR: Invalid KML file format: {e}", file=sys.stderr)
+        return 1
+    except ValueError as e:
+        print(f"\n❌ ERROR: Invalid data: {e}", file=sys.stderr)
+        return 1
     except Exception as e:
-        print(f"\n Error: {e}")
+        print(f"\n❌ ERROR: {type(e).__name__}: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+        return 1
         return 1
     
     return 0

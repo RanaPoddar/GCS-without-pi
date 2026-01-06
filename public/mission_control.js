@@ -15,6 +15,7 @@ class MissionControl {
         this.gcsMarker = null;
         this.gcsLocation = null;
         this.detectionMarkers = [];
+        this.detectionLog = []; // Store all detections
         this.missionStartTime = null;
         this.missionInterval = null;
         this.hasReceivedTelemetry = false;
@@ -22,6 +23,7 @@ class MissionControl {
         this.missionProgressInterval = null;
         this.currentWaypointMarker = null;
         this.waypointPreviewLayer = null;
+        this.lastUploadedFile = null; // Store last uploaded file for re-processing
         
         this.init();
     }
@@ -67,26 +69,26 @@ class MissionControl {
         this.gridLayer = L.layerGroup().addTo(this.map);
         
         // Custom drone icons
-        this.drone1Icon = L.divIcon({
-            className: 'drone-marker',
-            html: '<div style="font-size: 24px; text-shadow: 0 0 10px rgba(14, 165, 233, 0.8);">🛸</div>',
-            iconSize: [30, 30],
-            iconAnchor: [15, 15]
+        this.drone1Icon = L.icon({
+            iconUrl: 'assets/scanning_drone.png',
+            iconSize: [40, 40],
+            iconAnchor: [20, 20],
+            popupAnchor: [0, -20]
         });
         
-        this.drone2Icon = L.divIcon({
-            className: 'drone-marker',
-            html: '<div style="font-size: 24px; text-shadow: 0 0 10px rgba(34, 197, 94, 0.8);">🛸</div>',
-            iconSize: [30, 30],
-            iconAnchor: [15, 15]
+        this.drone2Icon = L.icon({
+            iconUrl: 'assets/spray_drone.png',
+            iconSize: [40, 40],
+            iconAnchor: [20, 20],
+            popupAnchor: [0, -20]
         });
         
         // GCS icon
-        this.gcsIcon = L.divIcon({
-            className: 'gcs-marker',
-            html: '<div style="font-size: 28px; text-shadow: 0 0 10px rgba(234, 179, 8, 0.8);">🎮</div>',
-            iconSize: [35, 35],
-            iconAnchor: [17, 17]
+        this.gcsIcon = L.icon({
+            iconUrl: 'assets/gcs.png',
+            iconSize: [45, 45],
+            iconAnchor: [22, 22],
+            popupAnchor: [0, -22]
         });
         
         // Drone markers
@@ -418,11 +420,44 @@ class MissionControl {
                 this.map.removeLayer(this.drone2PathLine);
             }
         });
+
+        // Bottom Panel Controls
+        document.getElementById('bottomPanelToggle').addEventListener('click', () => {
+            this.toggleBottomPanel();
+        });
+
+        document.getElementById('bottomPanelHeader').addEventListener('click', (e) => {
+            if (e.target !== document.getElementById('bottomPanelToggle')) {
+                this.toggleBottomPanel();
+            }
+        });
+
+        // Manual Detection Trigger
+        document.getElementById('triggerDetection').addEventListener('click', () => {
+            this.triggerManualDetection();
+        });
+
+        // Confidence slider update
+        document.getElementById('detectionConfidence').addEventListener('input', (e) => {
+            document.getElementById('confidenceValue').textContent = e.target.value + '%';
+        });
+
+        // Detection Log Controls
+        document.getElementById('clearLog').addEventListener('click', () => {
+            this.clearDetectionLog();
+        });
+
+        document.getElementById('exportLog').addEventListener('click', () => {
+            this.exportDetectionLog();
+        });
     }
     
     // KML Upload Handler
     async handleKMLUpload(file) {
         try {
+            // Store the file for later re-processing with different parameters
+            this.lastUploadedFile = file;
+            
             this.addAlert(`Uploading ${file.name}...`, 'info');
             
             // Create FormData to upload file to server
@@ -509,13 +544,21 @@ class MissionControl {
             return;
         }
         
+        // If we have the original file, re-upload with current parameters
+        if (this.lastUploadedFile) {
+            this.addAlert('Regenerating mission with current parameters...', 'info');
+            await this.handleKMLUpload(this.lastUploadedFile);
+            // Short delay to ensure server processing is complete
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        
         if (!this.missionData.serverMissionId) {
             this.addAlert('No mission ID from server. Please re-upload KML.', 'warning');
             return;
         }
         
         try {
-            this.addAlert('Fetching survey grid from server...', 'info');
+            this.addAlert('Loading survey grid...', 'info');
             // Clear existing grid
             this.gridLayer.clearLayers();
             // Fetch the mission data with waypoints from server
@@ -878,6 +921,7 @@ class MissionControl {
             marker.bindPopup(`
                 <div style="color: #fff;">
                     <strong>Detection</strong><br>
+                    Type: ${data.type === 'manual' ? 'Manual (Test)' : 'Automatic'}<br>
                     Confidence: ${(data.confidence * 100).toFixed(1)}%<br>
                     Time: ${new Date(data.timestamp).toLocaleTimeString()}
                 </div>
@@ -891,7 +935,13 @@ class MissionControl {
             const currentCount = parseInt(countEl.textContent) || 0;
             countEl.textContent = currentCount + 1;
             
-            this.addAlert(`Detection by Drone ${droneId}`, 'warning');
+            // Add to detection log
+            this.addDetectionToLog(data);
+            
+            const alertMsg = data.type === 'manual' 
+                ? `Manual detection test by Drone ${droneId}` 
+                : `Detection by Drone ${droneId}`;
+            this.addAlert(alertMsg, 'warning');
         }
     }
     
@@ -1589,6 +1639,215 @@ class MissionControl {
      */
     sleep(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    // ========================================
+    // Bottom Panel & Detection Testing Methods
+    // ========================================
+
+    /**
+     * Toggle bottom panel visibility
+     */
+    toggleBottomPanel() {
+        const panel = document.getElementById('bottomPanel');
+        const toggleIcon = document.getElementById('toggleIcon');
+        
+        panel.classList.toggle('collapsed');
+        
+        if (panel.classList.contains('collapsed')) {
+            toggleIcon.textContent = '▲';
+        } else {
+            toggleIcon.textContent = '▼';
+        }
+    }
+
+    /**
+     * Trigger manual detection for testing
+     */
+    triggerManualDetection() {
+        // Get selected drone
+        const selectedDrone = document.querySelector('input[name="triggerDrone"]:checked').value;
+        const droneId = parseInt(selectedDrone);
+        
+        // Get confidence level
+        const confidence = parseFloat(document.getElementById('detectionConfidence').value) / 100;
+        
+        // Get drone marker position
+        const marker = droneId === 1 ? this.drone1Marker : this.drone2Marker;
+        
+        if (!marker || marker.getOpacity() === 0) {
+            this.showTriggerMessage('error', `Drone ${droneId} is not active or has no position data`);
+            this.addAlert(`Cannot trigger detection - Drone ${droneId} not active`, 'error');
+            return;
+        }
+        
+        const position = marker.getLatLng();
+        
+        // Create detection object
+        const detection = {
+            drone_id: droneId,
+            latitude: position.lat,
+            longitude: position.lng,
+            confidence: confidence,
+            timestamp: new Date().toISOString(),
+            type: 'manual', // Mark as manual trigger
+            test: true
+        };
+        
+        console.log('Manual detection triggered:', detection);
+        
+        // Send to server via socket
+        this.socket.emit('manual_detection', detection);
+        
+        // Handle detection locally (add to map and log)
+        this.handleDetection(detection);
+        
+        // Show success message
+        this.showTriggerMessage('success', `Detection triggered for Drone ${droneId} at [${position.lat.toFixed(6)}, ${position.lng.toFixed(6)}]`);
+        this.addAlert(`Manual detection triggered (Drone ${droneId})`, 'success');
+    }
+
+    /**
+     * Show message in trigger info area
+     */
+    showTriggerMessage(type, message) {
+        const triggerInfo = document.getElementById('triggerInfo');
+        const icon = triggerInfo.querySelector('.info-icon');
+        const text = triggerInfo.querySelector('.info-text');
+        
+        // Reset classes
+        triggerInfo.classList.remove('success', 'error');
+        
+        if (type === 'success') {
+            triggerInfo.classList.add('success');
+            icon.textContent = '✅';
+        } else if (type === 'error') {
+            triggerInfo.classList.add('error');
+            icon.textContent = '❌';
+        } else {
+            icon.textContent = 'ℹ️';
+        }
+        
+        text.textContent = message;
+        
+        // Reset after 5 seconds
+        setTimeout(() => {
+            triggerInfo.classList.remove('success', 'error');
+            icon.textContent = 'ℹ️';
+            text.textContent = 'Drone must be flying to trigger detection';
+        }, 5000);
+    }
+
+    /**
+     * Add detection to log
+     */
+    addDetectionToLog(detection) {
+        // Add to log array
+        this.detectionLog.unshift(detection); // Add to beginning
+        
+        // Update total count
+        document.getElementById('totalDetections').textContent = this.detectionLog.length;
+        
+        // Hide empty message
+        document.getElementById('logEmpty').style.display = 'none';
+        
+        // Create log item
+        const logContainer = document.getElementById('detectionLogContainer');
+        const logItem = document.createElement('div');
+        logItem.className = 'log-item';
+        logItem.dataset.detectionId = detection.timestamp;
+        
+        const time = new Date(detection.timestamp);
+        const timeStr = time.toLocaleTimeString();
+        const dateStr = time.toLocaleDateString();
+        
+        const type = detection.type || 'auto';
+        const typeClass = type === 'manual' ? 'manual' : 'auto';
+        const typeLabel = type === 'manual' ? 'Manual' : 'Auto';
+        
+        logItem.innerHTML = `
+            <div class="log-item-icon">${detection.drone_id === 1 ? '🔍' : '💧'}</div>
+            <div class="log-item-content">
+                <div class="log-item-header">
+                    <span class="log-item-drone">Drone ${detection.drone_id}</span>
+                    <span class="log-item-type ${typeClass}">${typeLabel}</span>
+                    <span class="log-item-time">${timeStr} • ${dateStr}</span>
+                </div>
+                <div class="log-item-coords">
+                    <span>Lat: ${detection.latitude.toFixed(6)}</span>
+                    <span>Lon: ${detection.longitude.toFixed(6)}</span>
+                </div>
+                <div class="log-item-confidence">Confidence: ${(detection.confidence * 100).toFixed(1)}%</div>
+            </div>
+            <div class="log-item-actions">
+                <button class="log-item-action" onclick="missionControl.zoomToDetection(${detection.latitude}, ${detection.longitude})">
+                    📍 View
+                </button>
+            </div>
+        `;
+        
+        // Add to container
+        logContainer.insertBefore(logItem, logContainer.firstChild);
+        
+        // Limit log size (keep last 100)
+        if (this.detectionLog.length > 100) {
+            this.detectionLog.pop();
+            const items = logContainer.querySelectorAll('.log-item');
+            if (items.length > 100) {
+                items[items.length - 1].remove();
+            }
+        }
+    }
+
+    /**
+     * Zoom map to detection location
+     */
+    zoomToDetection(lat, lng) {
+        this.map.setView([lat, lng], 18);
+        this.addAlert('Zoomed to detection location', 'info');
+    }
+
+    /**
+     * Clear detection log
+     */
+    clearDetectionLog() {
+        if (this.detectionLog.length === 0) {
+            return;
+        }
+        
+        if (confirm(`Clear all ${this.detectionLog.length} detections from log?`)) {
+            this.detectionLog = [];
+            document.getElementById('totalDetections').textContent = '0';
+            document.getElementById('detectionLogContainer').innerHTML = `
+                <div class="log-empty" id="logEmpty">
+                    <span class="empty-icon">📭</span>
+                    <p>No detections yet</p>
+                </div>
+            `;
+            this.addAlert('Detection log cleared', 'info');
+        }
+    }
+
+    /**
+     * Export detection log to JSON
+     */
+    exportDetectionLog() {
+        if (this.detectionLog.length === 0) {
+            alert('No detections to export');
+            return;
+        }
+        
+        const dataStr = JSON.stringify(this.detectionLog, null, 2);
+        const dataBlob = new Blob([dataStr], { type: 'application/json' });
+        
+        const url = URL.createObjectURL(dataBlob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `detection_log_${new Date().toISOString().replace(/:/g, '-')}.json`;
+        link.click();
+        
+        URL.revokeObjectURL(url);
+        this.addAlert(`Exported ${this.detectionLog.length} detections`, 'success');
     }
 }
 

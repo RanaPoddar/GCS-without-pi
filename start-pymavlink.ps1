@@ -19,11 +19,34 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
 if (-not (Test-Path "myvenv")) {
     Write-Host " Creating virtual environment..." -ForegroundColor Yellow
     python -m venv myvenv
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host " Failed to create virtual environment" -ForegroundColor Red
+        exit 1
+    }
 }
 
 # Install Python dependencies
-Write-Host " Installing Python dependencies..." -ForegroundColor Yellow
-.\myvenv\Scripts\python.exe -m pip install -r external-services\requirements.txt
+Write-Host "Installing Python dependencies..." -ForegroundColor Yellow
+& ".\myvenv\Scripts\python.exe" -m pip install --upgrade pip --quiet
+& ".\myvenv\Scripts\python.exe" -m pip install -r external-services\requirements.txt --quiet
+
+if ($LASTEXITCODE -ne 0) {
+    Write-Host " Failed to install Python dependencies" -ForegroundColor Red
+    Write-Host "Try running manually:" -ForegroundColor Yellow
+    Write-Host "   .\myvenv\Scripts\python.exe -m pip install -r external-services\requirements.txt" -ForegroundColor Yellow
+    exit 1
+}
+
+# Verify shapely installation (critical for KML processing)
+Write-Host "🔍 Verifying shapely installation..." -ForegroundColor Yellow
+& ".\myvenv\Scripts\python.exe" -c "import shapely; print(f'✅ Shapely version: {shapely.__version__}')" 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host " Shapely not installed correctly!" -ForegroundColor Red
+    Write-Host "Installing shapely separately..." -ForegroundColor Yellow
+    & ".\myvenv\Scripts\python.exe" -m pip install shapely --force-reinstall
+}
+
+Write-Host " Python dependencies OK" -ForegroundColor Green
 
 # Install Node.js dependencies
 if (-not (Test-Path "node_modules")) {

@@ -75,15 +75,30 @@ router.post('/upload_kml', uploadKML.single('kml'), async (req, res) => {
     
     let stdout, stderr;
     try {
-      const result = await execAsync(command);
+      const result = await execAsync(command, { maxBuffer: 1024 * 1024 * 10 }); // 10MB buffer
       stdout = result.stdout;
       stderr = result.stderr;
     } catch (execError) {
       // Capture stderr from failed command
+      const errorOutput = execError.stderr || execError.stdout || execError.message;
       logger.error(`Python script error (exit code ${execError.code}):`);
-      logger.error(`STDOUT: ${execError.stdout}`);
-      logger.error(`STDERR: ${execError.stderr}`);
-      throw new Error(`KML processing failed: ${execError.stderr || execError.message}`);
+      logger.error(`Command: ${command}`);
+      logger.error(`STDOUT: ${execError.stdout || '(empty)'}`);
+      logger.error(`STDERR: ${execError.stderr || '(empty)'}`);
+      
+      // Extract the most relevant error message
+      let errorMsg = 'KML processing failed';
+      if (execError.stderr) {
+        const lines = execError.stderr.split('\n').filter(line => line.trim());
+        const errorLine = lines.find(line => line.includes('Error:') || line.includes('error:') || line.includes('Traceback'));
+        if (errorLine) {
+          errorMsg = errorLine;
+        } else if (lines.length > 0) {
+          errorMsg = lines[lines.length - 1]; // Last line often has the error
+        }
+      }
+      
+      throw new Error(`${errorMsg}\n\nFull error: ${errorOutput}`);
     }
 
     if (stderr && !stderr.includes('FutureWarning')) {
