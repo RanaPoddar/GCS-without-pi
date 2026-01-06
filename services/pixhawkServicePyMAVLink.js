@@ -133,6 +133,9 @@ async function initializePixhawkConnections(io) {
     return;
   }
   
+  // First, sync any drones that are already connected in PyMAVLink
+  await syncConnectedDrones(io);
+  
   let connectedCount = 0;
   
   for (const droneConfig of config.DRONE_CONFIGS) {
@@ -330,6 +333,48 @@ async function sendCommand(droneId, command, params = {}) {
 }
 
 /**
+ * Sync with PyMAVLink service to detect already-connected drones
+ */
+async function syncConnectedDrones(io) {
+  try {
+    logger.info('🔄 Syncing with PyMAVLink service...');
+    
+    const result = await callPyMAVLink('/drones');
+    
+    if (result.success && result.data && result.data.drones) {
+      const pymavlinkDrones = result.data.drones;
+      
+      for (const drone of pymavlinkDrones) {
+        if (drone.connected && !connectedDrones.has(drone.drone_id)) {
+          logger.info(`📡 Found connected drone ${drone.drone_id} in PyMAVLink (${drone.simulation ? 'SIMULATION' : 'HARDWARE'})`);
+          
+          connectedDrones.set(drone.drone_id, {
+            connected: true,
+            port: drone.port,
+            simulation: drone.simulation
+          });
+          
+          // Start telemetry polling
+          startTelemetryPolling(drone.drone_id, io);
+          
+          // Emit connection event
+          if (io) {
+            io.emit('drone_connected', { 
+              drone_id: drone.drone_id,
+              simulation: drone.simulation 
+            });
+          }
+          
+          logger.info(`✅ Synced Drone ${drone.drone_id} - telemetry polling started`);
+        }
+      }
+    }
+  } catch (error) {
+    logger.error(`Failed to sync with PyMAVLink: ${error.message}`);
+  }
+}
+
+/**
  * Disconnect all drones
  */
 async function disconnectAll() {
@@ -353,6 +398,7 @@ module.exports = {
   droneStats,
   initializePixhawkConnections,
   reconnectDrone,
+  syncConnectedDrones,
   getDroneStatusList,
   getDroneConnection,
   getDroneStats,

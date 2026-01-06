@@ -15,6 +15,7 @@ class MissionControl {
         this.gcsMarker = null;
         this.gcsLocation = null;
         this.detectionMarkers = [];
+        this.detectionLog = []; // Store all detections
         this.missionStartTime = null;
         this.missionInterval = null;
         this.hasReceivedTelemetry = false;
@@ -22,6 +23,7 @@ class MissionControl {
         this.missionProgressInterval = null;
         this.currentWaypointMarker = null;
         this.waypointPreviewLayer = null;
+        this.lastUploadedFile = null; // Store last uploaded file for re-processing
         
         this.init();
     }
@@ -67,26 +69,26 @@ class MissionControl {
         this.gridLayer = L.layerGroup().addTo(this.map);
         
         // Custom drone icons
-        this.drone1Icon = L.divIcon({
-            className: 'drone-marker',
-            html: '<div style="font-size: 24px; text-shadow: 0 0 10px rgba(14, 165, 233, 0.8);">🛸</div>',
-            iconSize: [30, 30],
-            iconAnchor: [15, 15]
+        this.drone1Icon = L.icon({
+            iconUrl: 'assets/scanning_drone.png',
+            iconSize: [40, 40],
+            iconAnchor: [20, 20],
+            popupAnchor: [0, -20]
         });
         
-        this.drone2Icon = L.divIcon({
-            className: 'drone-marker',
-            html: '<div style="font-size: 24px; text-shadow: 0 0 10px rgba(34, 197, 94, 0.8);">🛸</div>',
-            iconSize: [30, 30],
-            iconAnchor: [15, 15]
+        this.drone2Icon = L.icon({
+            iconUrl: 'assets/spray_drone.png',
+            iconSize: [40, 40],
+            iconAnchor: [20, 20],
+            popupAnchor: [0, -20]
         });
         
         // GCS icon
-        this.gcsIcon = L.divIcon({
-            className: 'gcs-marker',
-            html: '<div style="font-size: 28px; text-shadow: 0 0 10px rgba(234, 179, 8, 0.8);">🎮</div>',
-            iconSize: [35, 35],
-            iconAnchor: [17, 17]
+        this.gcsIcon = L.icon({
+            iconUrl: 'assets/gcs.png',
+            iconSize: [45, 45],
+            iconAnchor: [22, 22],
+            popupAnchor: [0, -22]
         });
         
         // Drone markers
@@ -243,6 +245,15 @@ class MissionControl {
             this.reconnectDrone(2);
         });
         
+        // Simulation mode buttons
+        document.getElementById('simulateDrone1').addEventListener('click', () => {
+            this.startSimulation(1);
+        });
+        
+        document.getElementById('simulateDrone2').addEventListener('click', () => {
+            this.startSimulation(2);
+        });
+        
         // Telemetry updates
         // Drone telemetry updates
         this.socket.on('drone_telemetry_update', (data) => {
@@ -263,9 +274,43 @@ class MissionControl {
             this.addAlert(`Drone ${data.drone_id} disconnected`, 'error');
         });
         
+        // Pi connected/disconnected (treat as drone)
+        this.socket.on('pi_connected', (data) => {
+            console.log('Pi connected:', data);
+            // Map pi_id to drone_id
+            if (data.pi_id === 'detection_drone_pi_pushpak') {
+                this.updateDroneConnectionStatus(1, true);
+                this.addAlert('Detection Pi connected', 'success');
+            }
+        });
+        
+        this.socket.on('pi_disconnected', (data) => {
+            console.log('Pi disconnected:', data);
+            if (data.pi_id === 'detection_drone_pi_pushpak') {
+                this.updateDroneConnectionStatus(1, false);
+                this.addAlert('Detection Pi disconnected', 'error');
+            }
+        });
+        
         // Detection updates
         this.socket.on('detection', (data) => {
             this.handleDetection(data);
+        });
+        
+        // Crop detection from Pi
+        this.socket.on('crop_detection', (data) => {
+            console.log('Crop detection received:', data);
+            this.handleDetection(data);
+        });
+        
+        // Detection status updates
+        this.socket.on('detection_status', (data) => {
+            this.handleDetectionStatus(data);
+        });
+        
+        // Detection stats updates
+        this.socket.on('detection_stats', (data) => {
+            this.handleDetectionStats(data);
         });
         
         // Mission status updates
@@ -310,19 +355,39 @@ class MissionControl {
         
         // Mission Control Buttons
         document.getElementById('startMission').addEventListener('click', () => {
+            console.log('🔘 Start Mission button clicked');
             this.startMission();
         });
         
         document.getElementById('pauseMission').addEventListener('click', () => {
+            console.log('🔘 Pause Mission button clicked');
             this.pauseMission();
         });
         
         document.getElementById('stopMission').addEventListener('click', () => {
+            console.log('🔘 Stop Mission button clicked');
             this.stopMission();
         });
         
         document.getElementById('returnToHome').addEventListener('click', () => {
             this.returnToHome();
+        });
+        
+        // Detection Control Buttons
+        document.getElementById('startDetection1').addEventListener('click', () => {
+            this.startDetection(1);
+        });
+        
+        document.getElementById('stopDetection1').addEventListener('click', () => {
+            this.stopDetection(1);
+        });
+        
+        document.getElementById('startDetection2').addEventListener('click', () => {
+            this.startDetection(2);
+        });
+        
+        document.getElementById('stopDetection2').addEventListener('click', () => {
+            this.stopDetection(2);
         });
         
         // Map Controls
@@ -364,11 +429,49 @@ class MissionControl {
                 this.map.removeLayer(this.drone2PathLine);
             }
         });
+
+        // Bottom Panel Controls
+        document.getElementById('bottomPanelToggle').addEventListener('click', () => {
+            this.toggleBottomPanel();
+        });
+
+        document.getElementById('bottomPanelHeader').addEventListener('click', (e) => {
+            if (e.target !== document.getElementById('bottomPanelToggle')) {
+                this.toggleBottomPanel();
+            }
+        });
+
+        // Manual Detection Trigger
+        document.getElementById('triggerDetection').addEventListener('click', () => {
+            this.triggerManualDetection();
+        });
+
+        // Confidence slider update
+        document.getElementById('detectionConfidence').addEventListener('input', (e) => {
+            document.getElementById('confidenceValue').textContent = e.target.value + '%';
+        });
+
+        // Detection Log Controls
+        document.getElementById('clearLog').addEventListener('click', () => {
+            this.clearDetectionLog();
+        });
+
+        document.getElementById('exportLog').addEventListener('click', () => {
+            this.exportDetectionLog();
+        });
+        
+        // System console controls
+        document.getElementById('clearConsole').addEventListener('click', () => {
+            this.clearSystemConsole();
+        });
     }
     
     // KML Upload Handler
     async handleKMLUpload(file) {
         try {
+            // Store the file for later re-processing with different parameters
+            this.lastUploadedFile = file;
+            
             this.addAlert(`Uploading ${file.name}...`, 'info');
             
             // Create FormData to upload file to server
@@ -438,6 +541,7 @@ class MissionControl {
                 document.getElementById('missionInfo').classList.remove('hidden');
                 
                 this.addAlert(`KML loaded: ${file.name}`, 'success');
+                alert(`✅ KML File Loaded!\n\nFile: ${file.name}\n\nNext: Click "Generate Grid" button.`);
                 this.updateMissionStatus('ready');
                 document.getElementById('generateGrid').disabled = false;
             }
@@ -454,13 +558,21 @@ class MissionControl {
             return;
         }
         
+        // If we have the original file, re-upload with current parameters
+        if (this.lastUploadedFile) {
+            this.addAlert('Regenerating mission with current parameters...', 'info');
+            await this.handleKMLUpload(this.lastUploadedFile);
+            // Short delay to ensure server processing is complete
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        
         if (!this.missionData.serverMissionId) {
             this.addAlert('No mission ID from server. Please re-upload KML.', 'warning');
             return;
         }
         
         try {
-            this.addAlert('Fetching survey grid from server...', 'info');
+            this.addAlert('Loading survey grid...', 'info');
             // Clear existing grid
             this.gridLayer.clearLayers();
             // Fetch the mission data with waypoints from server
@@ -520,6 +632,7 @@ class MissionControl {
             this.drawWaypointPreview(waypoints);
             
             this.addAlert(`Survey grid loaded: ${waypoints.length} waypoints`, 'success');
+            alert(`✅ Survey Grid Generated!\n\n${waypoints.length} waypoints created\n\nNext step: Connect drone and click "Start Mission" to begin.`);
             document.getElementById('startMission').disabled = false;
         } catch (error) {
             console.error('Grid generation error:', error);
@@ -529,8 +642,47 @@ class MissionControl {
     
     // Mission Control Functions - Now with automated execution
     async startMission() {
+        console.log('🎯 Start Mission button clicked');
+        console.log('Mission data:', this.missionData);
+        
+        // Validate mission data exists
+        if (!this.missionData || !this.missionData.waypoints || this.missionData.waypoints.length === 0) {
+            console.error('❌ No mission data available');
+            console.log('this.missionData:', this.missionData);
+            const errorMsg = '❌ No mission loaded!\n\nPlease upload KML file and generate survey grid first.';
+            alert(errorMsg);
+            this.addAlert('❌ No mission loaded! Please upload KML and generate survey grid first.', 'error');
+            return;
+        }
+        
+        console.log(`✅ Mission has ${this.missionData.waypoints.length} waypoints`);
+        
+        // Check drone connection
+        const drone1StatusEl = document.getElementById('drone1StatusText');
+        console.log('Drone status element:', drone1StatusEl);
+        const drone1Text = drone1StatusEl ? drone1StatusEl.textContent : 'NOT FOUND';
+        console.log('Drone 1 status text:', drone1Text);
+        
+        if (drone1Text !== 'Connected') {
+            console.error('❌ Drone not connected, status:', drone1Text);
+            const errorMsg = `❌ Drone 1 is not connected!\n\nCurrent Status: ${drone1Text}\n\nPlease connect the drone using PyMAVLink service before starting mission.`;
+            alert(errorMsg);
+            this.addAlert('❌ Drone 1 is not connected!', 'error');
+            this.addAlert('ℹ️ Please connect the drone before starting mission.', 'info');
+            return;
+        }
+        
+        console.log('✅ All validations passed, starting automated mission...');
+        
         // Use automated mission execution instead of manual control
-        await this.startAutomatedMission();
+        try {
+            await this.startAutomatedMission();
+        } catch (error) {
+            console.error('Start mission error:', error);
+            const errorMsg = `❌ Mission Start Failed!\n\n${error.message}`;
+            alert(errorMsg);
+            this.addAlert(`❌ Mission start failed: ${error.message}`, 'error');
+        }
     }
     
     async pauseMission() {
@@ -544,32 +696,6 @@ class MissionControl {
     
     async stopMission() {
         await this.stopAutomatedMission();
-    }
-    
-    pauseMission() {
-        this.addAlert('Pausing mission...', 'warning');
-        this.socket.emit('pause_mission');
-        this.updateMissionStatus('warning');
-    }
-    
-    stopMission() {
-        this.addAlert('Stopping mission...', 'warning');
-        this.updateMissionStatus('idle');
-        
-        // Reset buttons
-        document.getElementById('startMission').disabled = false;
-        document.getElementById('pauseMission').disabled = true;
-        document.getElementById('stopMission').disabled = true;
-        document.getElementById('returnToHome').disabled = true;
-        
-        // Stop timer
-        if (this.missionInterval) {
-            clearInterval(this.missionInterval);
-            this.missionInterval = null;
-        }
-        
-        this.socket.emit('stop_mission');
-        this.addAlert('Mission stopped', 'info');
     }
     
     returnToHome() {
@@ -586,18 +712,18 @@ class MissionControl {
         // Update connection status when telemetry is received
         this.updateDroneConnectionStatus(droneId, true);
         
-        // Extract GPS coordinates
-        const latitude = telemetry.gps?.lat;
-        const longitude = telemetry.gps?.lon;
+        // Extract GPS coordinates - handle both nested and flat structures
+        const latitude = telemetry.gps?.lat || telemetry.latitude;
+        const longitude = telemetry.gps?.lon || telemetry.longitude;
         const altitude = telemetry.altitude || 0;
         const heading = telemetry.heading || 0;
         const groundspeed = telemetry.groundspeed || 0;
         const flightMode = telemetry.flight_mode || 'UNKNOWN';
         const armed = telemetry.armed || false;
-        const batteryVoltage = telemetry.battery?.voltage || 0;
-        const batteryPercent = telemetry.battery?.remaining || 100;
-        const satellites = telemetry.gps?.satellites_visible || 0;
-        const gpsFixType = telemetry.gps?.fix_type || 0;
+        const batteryVoltage = telemetry.battery?.voltage || telemetry.battery_voltage || 0;
+        const batteryPercent = telemetry.battery?.remaining || telemetry.battery_remaining || 100;
+        const satellites = telemetry.gps?.satellites_visible || telemetry.satellites_visible || 0;
+        const gpsFixType = telemetry.gps?.fix_type || telemetry.gps_fix_type || 0;
         
         // Update position
         if (latitude && longitude) {
@@ -703,6 +829,97 @@ class MissionControl {
         }
     }
     
+    // Detection Control Methods
+    startDetection(droneId) {
+        console.log(`Starting detection for Drone ${droneId}`);
+        
+        // Try Socket.IO first (WiFi - shorter range but faster)
+        this.socket.emit('start_detection', { 
+            pi_id: droneId === 1 ? 'detection_drone_pi_pushpak' : 'drone_2_pi'
+        });
+        
+        // Also send via MAVLink for long-range control (1-10km)
+        this.sendMAVLinkDetectionCommand(droneId, 'start');
+        
+        this.addAlert(`Starting detection on Drone ${droneId} (WiFi + MAVLink)...`, 'info');
+    }
+    
+    stopDetection(droneId) {
+        console.log(`Stopping detection for Drone ${droneId}`);
+        
+        // Try Socket.IO first
+        this.socket.emit('stop_detection', { 
+            pi_id: droneId === 1 ? 'detection_drone_pi_pushpak' : 'drone_2_pi'
+        });
+        
+        // Also send via MAVLink for long-range control
+        this.sendMAVLinkDetectionCommand(droneId, 'stop');
+        
+        this.addAlert(`Stopping detection on Drone ${droneId} (WiFi + MAVLink)...`, 'info');
+    }
+    
+    async sendMAVLinkDetectionCommand(droneId, action) {
+        /**
+         * Send detection control via MAVLink (long-range 1-10km).
+         * This works even when drone is outside WiFi range.
+         */
+        try {
+            const endpoint = action === 'start' ? 
+                `/drone/${droneId}/pi/start_detection` : 
+                `/drone/${droneId}/pi/stop_detection`;
+            
+            const response = await fetch(`http://localhost:5000${endpoint}`, {
+                method: 'POST'
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                console.log(`✅ MAVLink ${action} detection command sent to Drone ${droneId}`);
+            } else {
+                console.warn(`⚠️  MAVLink command failed: ${data.error || 'Unknown error'}`);
+            }
+        } catch (error) {
+            console.error(`❌ Failed to send MAVLink command: ${error.message}`);
+            // Don't show error to user - Socket.IO might still work
+        }
+    }
+    
+    handleDetectionStatus(data) {
+        console.log('Detection status update:', data);
+        
+        // Determine drone ID from pi_id
+        const droneId = data.pi_id === 'detection_drone_pi_pushpak' ? 1 : 2;
+        const statusElement = document.getElementById(`detection${droneId}Status`);
+        
+        if (statusElement) {
+            if (data.status === 'active') {
+                statusElement.textContent = '🟢 Active';
+                statusElement.style.color = '#22c55e';
+                this.addAlert(`Drone ${droneId} detection started`, 'success');
+            } else if (data.status === 'inactive') {
+                statusElement.textContent = '⚪ Inactive';
+                statusElement.style.color = '#64748b';
+                this.addAlert(`Drone ${droneId} detection stopped`, 'warning');
+            } else if (data.status === 'failed') {
+                statusElement.textContent = '🔴 Failed';
+                statusElement.style.color = '#ef4444';
+                this.addAlert(`Drone ${droneId} detection failed: ${data.message}`, 'error');
+            }
+        }
+    }
+    
+    handleDetectionStats(data) {
+        console.log('Detection stats update:', data);
+        
+        const droneId = data.pi_id === 'detection_drone_pi_pushpak' ? 1 : 2;
+        const countElement = document.getElementById(`drone${droneId}Detections`);
+        
+        if (countElement && data.stats) {
+            countElement.textContent = data.stats.detection_count || data.stats.total_detections || 0;
+        }
+    }
+    
     // Detection Handler
     handleDetection(data) {
         if (data.latitude && data.longitude) {
@@ -718,6 +935,7 @@ class MissionControl {
             marker.bindPopup(`
                 <div style="color: #fff;">
                     <strong>Detection</strong><br>
+                    Type: ${data.type === 'manual' ? 'Manual (Test)' : 'Automatic'}<br>
                     Confidence: ${(data.confidence * 100).toFixed(1)}%<br>
                     Time: ${new Date(data.timestamp).toLocaleTimeString()}
                 </div>
@@ -731,7 +949,13 @@ class MissionControl {
             const currentCount = parseInt(countEl.textContent) || 0;
             countEl.textContent = currentCount + 1;
             
-            this.addAlert(`Detection by Drone ${droneId}`, 'warning');
+            // Add to detection log
+            this.addDetectionToLog(data);
+            
+            const alertMsg = data.type === 'manual' 
+                ? `Manual detection test by Drone ${droneId}` 
+                : `Detection by Drone ${droneId}`;
+            this.addAlert(alertMsg, 'warning');
         }
     }
     
@@ -764,16 +988,28 @@ class MissionControl {
         const indicator = document.getElementById(`drone${droneId}StatusIndicator`);
         const text = document.getElementById(`drone${droneId}StatusText`);
         
+        // Update detection control buttons
+        const startBtn = document.getElementById(`startDetection${droneId}`);
+        const stopBtn = document.getElementById(`stopDetection${droneId}`);
+        
         if (connected) {
             indicator.classList.remove('disconnected');
             indicator.classList.add('connected');
             text.textContent = 'Connected';
             text.style.color = '#48bb78';
+            
+            // Enable detection buttons
+            if (startBtn) startBtn.disabled = false;
+            if (stopBtn) stopBtn.disabled = false;
         } else {
             indicator.classList.remove('connected');
             indicator.classList.add('disconnected');
             text.textContent = 'Disconnected';
             text.style.color = '#fc8181';
+            
+            // Disable detection buttons
+            if (startBtn) startBtn.disabled = true;
+            if (stopBtn) stopBtn.disabled = true;
         }
     }
 
@@ -792,6 +1028,40 @@ class MissionControl {
             btn.disabled = false;
             btn.textContent = '⟲';
         }, 3000);
+    }
+    
+    async startSimulation(droneId) {
+        console.log(`🎮 Starting simulation mode for Drone ${droneId}...`);
+        const btn = document.getElementById(`simulateDrone${droneId}`);
+        btn.disabled = true;
+        btn.textContent = '⏳';
+        
+        try {
+            const response = await fetch(`http://localhost:5000/drone/${droneId}/simulate`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                this.addAlert(`🎮 Drone ${droneId} connected in SIMULATION mode`, 'success');
+                this.updateDroneConnectionStatus(droneId, true);
+                console.log(`✅ Simulation started for Drone ${droneId}`);
+            } else {
+                this.addAlert(`❌ Failed to start simulation for Drone ${droneId}`, 'error');
+                console.error('Simulation failed:', result.error);
+            }
+        } catch (error) {
+            console.error('Simulation request failed:', error);
+            this.addAlert(`❌ Cannot connect to PyMAVLink service`, 'error');
+        }
+        
+        // Re-enable button
+        setTimeout(() => {
+            btn.disabled = false;
+            btn.textContent = '🎮';
+        }, 2000);
     }
     
     updateMissionStatus(status) {
@@ -830,10 +1100,56 @@ class MissionControl {
         
         container.insertBefore(alert, container.firstChild);
         
+        // Also add to system console
+        this.addConsoleMessage(message, type);
+        
         // Limit alerts
         while (container.children.length > 10) {
             container.removeChild(container.lastChild);
         }
+    }
+    
+    /**
+     * Add message to system console (like Mission Planner)
+     */
+    addConsoleMessage(message, type = 'info') {
+        const console = document.getElementById('systemConsole');
+        if (!console) return;
+        
+        const now = new Date();
+        const timeStr = now.toLocaleTimeString('en-US', { hour12: false });
+        
+        const msgDiv = document.createElement('div');
+        msgDiv.className = `console-message console-${type}`;
+        msgDiv.innerHTML = `
+            <span class="console-time">${timeStr}</span>
+            <span class="console-text">${message}</span>
+        `;
+        
+        console.appendChild(msgDiv);
+        
+        // Auto-scroll to bottom
+        console.scrollTop = console.scrollHeight;
+        
+        // Keep only last 100 messages
+        while (console.children.length > 100) {
+            console.removeChild(console.firstChild);
+        }
+    }
+    
+    /**
+     * Clear system console
+     */
+    clearSystemConsole() {
+        const console = document.getElementById('systemConsole');
+        if (!console) return;
+        
+        console.innerHTML = `
+            <div class="console-message console-info">
+                <span class="console-time">${new Date().toLocaleTimeString('en-US', { hour12: false })}</span>
+                <span class="console-text">Console cleared</span>
+            </div>
+        `;
     }
     
     centerOnDrones() {
@@ -1033,74 +1349,190 @@ class MissionControl {
      * Upload mission waypoints to drone and start automated execution
      */
     async startAutomatedMission() {
+        console.log('🚀 Starting automated mission...');
+        
         if (!this.missionData || !this.missionData.waypoints) {
-            this.addAlert('No mission loaded. Please generate survey grid first.', 'warning');
+            console.error('No mission data available');
+            this.addAlert('❌ No mission loaded. Please generate survey grid first.', 'warning');
             return;
         }
         
         try {
-            this.addAlert(' Starting automated mission...', 'info');
+            this.addAlert('🚀 Starting automated mission...', 'info');
             
             const waypoints = this.missionData.waypoints;
-            this.addAlert(` Mission has ${waypoints.length} waypoints`, 'info');
+            console.log(`Mission has ${waypoints.length} waypoints`);
+            this.addAlert(`📊 Mission has ${waypoints.length} waypoints`, 'info');
             
             // Select drone - for now use Drone 1
             const droneId = 1;
             
             // Check if drone is connected
             const drone1Text = document.getElementById('drone1StatusText').textContent;
+            console.log(`Drone 1 status: ${drone1Text}`);
             if (drone1Text !== 'Connected') {
-                this.addAlert(' Drone 1 not connected! Connect drone first.', 'error');
+                console.error('Drone 1 not connected');
+                this.addAlert('❌ Drone 1 not connected! Connect drone first.', 'error');
                 return;
             }
             
+            // Check drone position vs mission start point
+            const firstWaypoint = waypoints[0];
+            const currentPos = this.drone1Marker.getLatLng();
+            const distance = this.calculateDistance(
+                { lat: currentPos.lat, lon: currentPos.lng },
+                { lat: firstWaypoint.latitude, lon: firstWaypoint.longitude }
+            );
+            
+            console.log(`Distance from mission start: ${distance.toFixed(1)}m`);
+            
+            // Warn if drone is far from start point
+            if (distance > 10) {
+                this.addAlert(`⚠️ Warning: Drone is ${distance.toFixed(0)}m from mission start point`, 'warning');
+                
+                const proceed = confirm(
+                    `⚠️ Warning: Drone Position Mismatch!\n\n` +
+                    `Current position: ${currentPos.lat.toFixed(6)}, ${currentPos.lng.toFixed(6)}\n` +
+                    `Mission start: ${firstWaypoint.latitude.toFixed(6)}, ${firstWaypoint.longitude.toFixed(6)}\n` +
+                    `Distance: ${distance.toFixed(1)} meters\n\n` +
+                    `The drone will:\n` +
+                    `1. Navigate to mission start at 5m altitude\n` +
+                    `2. Takeoff vertically to survey altitude\n` +
+                    `3. Execute survey waypoints\n\n` +
+                    `This is safe, but will add ${(distance / 10).toFixed(0)} seconds to mission time.\n\n` +
+                    `Continue with mission start?`
+                );
+                
+                if (!proceed) {
+                    this.addAlert('❌ Mission start cancelled by user', 'warning');
+                    return;
+                }
+            } else {
+                this.addAlert(`✅ Drone position OK (${distance.toFixed(1)}m from start)`, 'success');
+            }
+            
             // Upload mission to PyMAVLink service
-            this.addAlert(' Uploading waypoints to drone...', 'info');
-            const uploadResponse = await fetch(`http://localhost:5000/drone/${droneId}/mission/upload`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ waypoints })
-            });
+            this.addAlert('📤 Uploading waypoints to drone...', 'info');
+            console.log(`Uploading ${waypoints.length} waypoints to drone ${droneId}`);
+            
+            let uploadResponse;
+            try {
+                uploadResponse = await fetch(`http://localhost:5000/drone/${droneId}/mission/upload`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ waypoints })
+                });
+            } catch (fetchError) {
+                console.error('Network error during mission upload:', fetchError);
+                const errorMsg = '❌ Cannot connect to PyMAVLink service!\n\nPlease ensure:\n1. PyMAVLink service is running on port 5000\n2. Run: python external-services/pymavlink_service.py\n3. Or use: ./start-pymavlink.sh';
+                alert(errorMsg);
+                throw new Error(`Cannot connect to PyMAVLink service. Is it running on port 5000?`);
+            }
             
             if (!uploadResponse.ok) {
-                throw new Error('Failed to upload mission to drone');
+                let errorDetails = `HTTP ${uploadResponse.status}`;
+                try {
+                    const errorData = await uploadResponse.json();
+                    if (errorData.error) {
+                        errorDetails = errorData.error;
+                    }
+                } catch (jsonError) {
+                    // If JSON parsing fails, use status text
+                    errorDetails = uploadResponse.statusText || errorDetails;
+                }
+                
+                console.error('Upload response not OK:', errorDetails);
+                this.addAlert('❌ Failed to upload mission!', 'error');
+                this.addAlert(`⚠️ ${errorDetails}`, 'warning');
+                
+                const errorMsg = `❌ Failed to upload mission!\n\n${errorDetails}\n\nCheck System Messages console for details.`;
+                alert(errorMsg);
+                throw new Error(`Failed to upload mission: ${errorDetails}`);
             }
             
             const uploadResult = await uploadResponse.json();
+            console.log('Upload result:', uploadResult);
             if (!uploadResult.success) {
                 throw new Error('Mission upload returned failure');
             }
             
-            this.addAlert(` ${uploadResult.waypoint_count} waypoints uploaded to drone`, 'success');
+            // Note: PyMAVLink automatically adds NAV and TAKEOFF waypoints
+            const totalWaypoints = uploadResult.waypoint_count;
+            this.addAlert(`✅ ${totalWaypoints} waypoints uploaded (includes NAV→START + TAKEOFF)`, 'success');
             
             // ARM the drone if not already armed
             this.addAlert('🔧 Arming drone...', 'info');
-            const armResponse = await fetch(`http://localhost:5000/drone/${droneId}/arm`, {
-                method: 'POST'
-            });
+            let armResponse;
+            try {
+                armResponse = await fetch(`http://localhost:5000/drone/${droneId}/arm`, {
+                    method: 'POST'
+                });
+            } catch (fetchError) {
+                console.error('Network error during ARM:', fetchError);
+                this.addAlert('❌ Cannot connect to PyMAVLink service for ARM command!', 'error');
+                const errorMsg = '❌ Cannot connect to PyMAVLink service!\n\nPlease ensure PyMAVLink service is running on port 5000.';
+                alert(errorMsg);
+                return;
+            }
+            
             const armResult = await armResponse.json();
             
             if (armResult.success) {
-                this.addAlert(' Drone armed', 'success');
+                this.addAlert('✅ Drone armed successfully', 'success');
+                if (armResult.message) {
+                    console.log('ARM success message:', armResult.message);
+                }
             } else {
-                this.addAlert('Failed to arm drone. Check GPS lock and pre-arm checks.', 'error');
+                // Display the detailed error message from PyMAVLink
+                const errorDetails = armResult.error || 'Unknown ARM failure';
+                this.addAlert('❌ Failed to arm drone!', 'error');
+                this.addAlert(`⚠️ ${errorDetails}`, 'warning');
+                
+                // Log to console
+                console.error('ARM failed:', errorDetails);
+                console.error('Full response:', armResult);
+                
+                // Show detailed alert
+                const errorMsg = `❌ Failed to ARM drone!\n\n${errorDetails}\n\nCommon issues:\n• GPS: Need 3D fix with 8+ satellites\n• Battery: Check voltage is sufficient\n• Compass: Ensure proper calibration\n• Safety: Check all safety switches\n• RC: Verify RC connection if required\n\nCheck System Messages console for details.`;
+                alert(errorMsg);
                 return;
             }
             
             await this.sleep(2000); // Wait for arm to settle
             
-            // Start mission (will automatically set AUTO mode)
-            this.addAlert('Starting mission execution...', 'info');
-            const startResponse = await fetch(`http://localhost:5000/drone/${droneId}/mission/start`, {
-                method: 'POST'
-            });
+            // Start mission (will automatically set GUIDED then AUTO mode)
+            this.addAlert('🚀 Starting mission execution...', 'info');
+            let startResponse;
+            try {
+                startResponse = await fetch(`http://localhost:5000/drone/${droneId}/mission/start`, {
+                    method: 'POST'
+                });
+            } catch (fetchError) {
+                console.error('Network error during mission start:', fetchError);
+                this.addAlert('❌ Cannot connect to PyMAVLink service for mission start!', 'error');
+                const errorMsg = '❌ Cannot connect to PyMAVLink service!\n\nPlease ensure PyMAVLink service is running on port 5000.';
+                alert(errorMsg);
+                return;
+            }
+            
             const startResult = await startResponse.json();
             
             if (!startResult.success) {
-                throw new Error('Failed to start mission');
+                const errorDetails = startResult.error || 'Unknown mission start failure';
+                this.addAlert('❌ Failed to start mission!', 'error');
+                this.addAlert(`⚠️ ${errorDetails}`, 'warning');
+                
+                // Log to console
+                console.error('Mission start failed:', errorDetails);
+                console.error('Full response:', startResult);
+                
+                const errorMsg = `❌ Failed to start mission!\n\n${errorDetails}\n\nCheck System Messages console for details.`;
+                alert(errorMsg);
+                return;
             }
             
             this.addAlert(' Mission ACTIVE! Drone executing waypoints...', 'success');
+            alert('✅ Mission Started Successfully!\n\nThe drone will now:\n1. Takeoff to altitude\n2. Execute waypoints\n3. Complete survey mission\n\nMonitor progress on the dashboard.');
             this.updateMissionStatus('active');
             
             // Enable control buttons
@@ -1125,8 +1557,24 @@ class MissionControl {
             }, 1000);
             
         } catch (error) {
-            console.error('Automated mission error:', error);
-            this.addAlert(` Mission start failed: ${error.message}`, 'error');
+            console.error('❌ Automated mission error:', error);
+            this.addAlert(`❌ Mission start failed: ${error.message}`, 'error');
+            
+            // Show alert popup for errors that might not have been caught earlier
+            if (!error.message.includes('PyMAVLink') && !error.message.includes('upload') && !error.message.includes('ARM')) {
+                alert(`❌ Mission Error!\n\n${error.message}`);
+            }
+            
+            // Re-enable start button on error
+            document.getElementById('startMission').disabled = false;
+            document.getElementById('pauseMission').disabled = true;
+            document.getElementById('stopMission').disabled = true;
+            
+            // Stop mission timer if it was started
+            if (this.missionInterval) {
+                clearInterval(this.missionInterval);
+                this.missionInterval = null;
+            }
         }
     }
     
@@ -1368,6 +1816,215 @@ class MissionControl {
      */
     sleep(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    // ========================================
+    // Bottom Panel & Detection Testing Methods
+    // ========================================
+
+    /**
+     * Toggle bottom panel visibility
+     */
+    toggleBottomPanel() {
+        const panel = document.getElementById('bottomPanel');
+        const toggleIcon = document.getElementById('toggleIcon');
+        
+        panel.classList.toggle('collapsed');
+        
+        if (panel.classList.contains('collapsed')) {
+            toggleIcon.textContent = '▲';
+        } else {
+            toggleIcon.textContent = '▼';
+        }
+    }
+
+    /**
+     * Trigger manual detection for testing
+     */
+    triggerManualDetection() {
+        // Get selected drone
+        const selectedDrone = document.querySelector('input[name="triggerDrone"]:checked').value;
+        const droneId = parseInt(selectedDrone);
+        
+        // Get confidence level
+        const confidence = parseFloat(document.getElementById('detectionConfidence').value) / 100;
+        
+        // Get drone marker position
+        const marker = droneId === 1 ? this.drone1Marker : this.drone2Marker;
+        
+        if (!marker || marker.getOpacity() === 0) {
+            this.showTriggerMessage('error', `Drone ${droneId} is not active or has no position data`);
+            this.addAlert(`Cannot trigger detection - Drone ${droneId} not active`, 'error');
+            return;
+        }
+        
+        const position = marker.getLatLng();
+        
+        // Create detection object
+        const detection = {
+            drone_id: droneId,
+            latitude: position.lat,
+            longitude: position.lng,
+            confidence: confidence,
+            timestamp: new Date().toISOString(),
+            type: 'manual', // Mark as manual trigger
+            test: true
+        };
+        
+        console.log('Manual detection triggered:', detection);
+        
+        // Send to server via socket
+        this.socket.emit('manual_detection', detection);
+        
+        // Handle detection locally (add to map and log)
+        this.handleDetection(detection);
+        
+        // Show success message
+        this.showTriggerMessage('success', `Detection triggered for Drone ${droneId} at [${position.lat.toFixed(6)}, ${position.lng.toFixed(6)}]`);
+        this.addAlert(`Manual detection triggered (Drone ${droneId})`, 'success');
+    }
+
+    /**
+     * Show message in trigger info area
+     */
+    showTriggerMessage(type, message) {
+        const triggerInfo = document.getElementById('triggerInfo');
+        const icon = triggerInfo.querySelector('.info-icon');
+        const text = triggerInfo.querySelector('.info-text');
+        
+        // Reset classes
+        triggerInfo.classList.remove('success', 'error');
+        
+        if (type === 'success') {
+            triggerInfo.classList.add('success');
+            icon.textContent = '✅';
+        } else if (type === 'error') {
+            triggerInfo.classList.add('error');
+            icon.textContent = '❌';
+        } else {
+            icon.textContent = 'ℹ️';
+        }
+        
+        text.textContent = message;
+        
+        // Reset after 5 seconds
+        setTimeout(() => {
+            triggerInfo.classList.remove('success', 'error');
+            icon.textContent = 'ℹ️';
+            text.textContent = 'Drone must be flying to trigger detection';
+        }, 5000);
+    }
+
+    /**
+     * Add detection to log
+     */
+    addDetectionToLog(detection) {
+        // Add to log array
+        this.detectionLog.unshift(detection); // Add to beginning
+        
+        // Update total count
+        document.getElementById('totalDetections').textContent = this.detectionLog.length;
+        
+        // Hide empty message
+        document.getElementById('logEmpty').style.display = 'none';
+        
+        // Create log item
+        const logContainer = document.getElementById('detectionLogContainer');
+        const logItem = document.createElement('div');
+        logItem.className = 'log-item';
+        logItem.dataset.detectionId = detection.timestamp;
+        
+        const time = new Date(detection.timestamp);
+        const timeStr = time.toLocaleTimeString();
+        const dateStr = time.toLocaleDateString();
+        
+        const type = detection.type || 'auto';
+        const typeClass = type === 'manual' ? 'manual' : 'auto';
+        const typeLabel = type === 'manual' ? 'Manual' : 'Auto';
+        
+        logItem.innerHTML = `
+            <div class="log-item-icon">${detection.drone_id === 1 ? '🔍' : '💧'}</div>
+            <div class="log-item-content">
+                <div class="log-item-header">
+                    <span class="log-item-drone">Drone ${detection.drone_id}</span>
+                    <span class="log-item-type ${typeClass}">${typeLabel}</span>
+                    <span class="log-item-time">${timeStr} • ${dateStr}</span>
+                </div>
+                <div class="log-item-coords">
+                    <span>Lat: ${detection.latitude.toFixed(6)}</span>
+                    <span>Lon: ${detection.longitude.toFixed(6)}</span>
+                </div>
+                <div class="log-item-confidence">Confidence: ${(detection.confidence * 100).toFixed(1)}%</div>
+            </div>
+            <div class="log-item-actions">
+                <button class="log-item-action" onclick="missionControl.zoomToDetection(${detection.latitude}, ${detection.longitude})">
+                    📍 View
+                </button>
+            </div>
+        `;
+        
+        // Add to container
+        logContainer.insertBefore(logItem, logContainer.firstChild);
+        
+        // Limit log size (keep last 100)
+        if (this.detectionLog.length > 100) {
+            this.detectionLog.pop();
+            const items = logContainer.querySelectorAll('.log-item');
+            if (items.length > 100) {
+                items[items.length - 1].remove();
+            }
+        }
+    }
+
+    /**
+     * Zoom map to detection location
+     */
+    zoomToDetection(lat, lng) {
+        this.map.setView([lat, lng], 18);
+        this.addAlert('Zoomed to detection location', 'info');
+    }
+
+    /**
+     * Clear detection log
+     */
+    clearDetectionLog() {
+        if (this.detectionLog.length === 0) {
+            return;
+        }
+        
+        if (confirm(`Clear all ${this.detectionLog.length} detections from log?`)) {
+            this.detectionLog = [];
+            document.getElementById('totalDetections').textContent = '0';
+            document.getElementById('detectionLogContainer').innerHTML = `
+                <div class="log-empty" id="logEmpty">
+                    <span class="empty-icon">📭</span>
+                    <p>No detections yet</p>
+                </div>
+            `;
+            this.addAlert('Detection log cleared', 'info');
+        }
+    }
+
+    /**
+     * Export detection log to JSON
+     */
+    exportDetectionLog() {
+        if (this.detectionLog.length === 0) {
+            alert('No detections to export');
+            return;
+        }
+        
+        const dataStr = JSON.stringify(this.detectionLog, null, 2);
+        const dataBlob = new Blob([dataStr], { type: 'application/json' });
+        
+        const url = URL.createObjectURL(dataBlob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `detection_log_${new Date().toISOString().replace(/:/g, '-')}.json`;
+        link.click();
+        
+        URL.revokeObjectURL(url);
+        this.addAlert(`Exported ${this.detectionLog.length} detections`, 'success');
     }
 }
 

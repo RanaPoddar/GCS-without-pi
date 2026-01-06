@@ -6,24 +6,24 @@ echo "🚀 Starting Ground Control Station with PyMAVLink..."
 
 # Check if Python is installed
 if ! command -v python3 &> /dev/null; then
-    echo "❌ Python3 is not installed"
+    echo " Python3 is not installed"
     exit 1
 fi
 
 # Check if Node.js is installed
 if ! command -v node &> /dev/null; then
-    echo "❌ Node.js is not installed"
+    echo " Node.js is not installed"
     exit 1
 fi
 
 # Check/create virtual environment
 if [ ! -d "myvenv" ]; then
-    echo "📦 Creating virtual environment..."
+    echo " Creating virtual environment..."
     uv venv myvenv
 fi
 
 # Install Python dependencies using uv
-echo "📦 Installing Python dependencies..."
+echo " Installing Python dependencies..."
 uv pip install -r external-services/requirements.txt
 
 # Install Node.js dependencies
@@ -37,9 +37,10 @@ npm list axios &> /dev/null || npm install axios
 
 # Start PyMAVLink service in background (using venv Python)
 echo "🐍 Starting PyMAVLink service..."
-myvenv/bin/python external-services/pymavlink_service.py &
+myvenv/bin/python external-services/pymavlink_service.py > pymavlink.log 2>&1 &
 PYMAVLINK_PID=$!
 echo "PyMAVLink service started with PID: $PYMAVLINK_PID"
+echo "📝 PyMAVLink logs: pymavlink.log"
 
 # Wait for PyMAVLink service to be ready
 echo "⏳ Waiting for PyMAVLink service to be ready..."
@@ -69,6 +70,10 @@ echo "✅ All services started!"
 echo "📊 Mission Control: http://localhost:3000/mission-control"
 echo "🎮 Landing Page: http://localhost:3000"
 echo "🐍 PyMAVLink API: http://localhost:5000"
+echo ""
+echo "📝 Log Files:"
+echo "   Node.js:   tail -f combined.log"
+echo "   PyMAVLink: tail -f pymavlink.log"
 echo ""
 echo "Press Ctrl+C to stop all services"
 

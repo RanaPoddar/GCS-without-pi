@@ -47,12 +47,14 @@
                         <span class="drone-status-indicator" id="drone1StatusIndicator">●</span>
                         <span class="drone-status-text" id="drone1StatusText">Disconnected</span>
                         <button class="reconnect-btn" id="reconnectDrone1" title="Reconnect Drone 1">⟲</button>
+                        <button class="simulate-btn" id="simulateDrone1" title="Test Mode (No Hardware)">🎮</button>
                     </div>
                     <div class="drone-connection-item">
                         <span class="drone-label">Drone 2</span>
                         <span class="drone-status-indicator" id="drone2StatusIndicator">●</span>
                         <span class="drone-status-text" id="drone2StatusText">Disconnected</span>
                         <button class="reconnect-btn" id="reconnectDrone2" title="Reconnect Drone 2">⟲</button>
+                        <button class="simulate-btn" id="simulateDrone2" title="Test Mode (No Hardware)">🎮</button>
                     </div>
                 </div>
                 <div class="connection-status" id="connectionStatus">
@@ -108,12 +110,12 @@
                     <div class="parameter-grid">
                         <div class="param-group">
                             <label>Altitude (m)</label>
-                            <input type="number" id="altitude" value="50" min="10" max="200" step="5">
+                            <input type="number" id="altitude" value="15" min="10" max="200" step="1">
                         </div>
                         
                         <div class="param-group">
                             <label>Speed (m/s)</label>
-                            <input type="number" id="speed" value="5" min="1" max="15" step="0.5">
+                            <input type="number" id="speed" value="2" min="1" max="15" step="0.5">
                         </div>
                         
                         <div class="param-group">
@@ -163,6 +165,45 @@
                     </div>
                 </div>
 
+                <!-- Detection Control -->
+                <div class="panel-section">
+                    <h3 class="section-title">
+                        <span class="section-icon">🌾</span>
+                        Crop Detection
+                    </h3>
+                    
+                    <div class="action-buttons">
+                        <button class="btn btn-success" id="startDetection1" disabled>
+                            <span class="btn-icon">▶️</span>
+                            Start Detection (D1)
+                        </button>
+                        
+                        <button class="btn btn-warning" id="stopDetection1" disabled>
+                            <span class="btn-icon">⏹️</span>
+                            Stop Detection (D1)
+                        </button>
+                        
+                        <button class="btn btn-success" id="startDetection2" disabled>
+                            <span class="btn-icon">▶️</span>
+                            Start Detection (D2)
+                        </button>
+                        
+                        <button class="btn btn-warning" id="stopDetection2" disabled>
+                            <span class="btn-icon">⏹️</span>
+                            Stop Detection (D2)
+                        </button>
+                    </div>
+                    
+                    <div class="info-item" style="margin-top: 10px;">
+                        <span class="info-label">D1 Status:</span>
+                        <span class="info-value" id="detection1Status">Inactive</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">D2 Status:</span>
+                        <span class="info-value" id="detection2Status">Inactive</span>
+                    </div>
+                </div>
+
                 <!-- Mission Progress -->
                 <div class="panel-section">
                     <h3 class="section-title">
@@ -187,6 +228,21 @@
                                 <span class="stat-label">Elapsed:</span>
                                 <span class="stat-value" id="elapsedTime">00:00</span>
                             </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- System Messages Console -->
+                <div class="panel-section">
+                    <h3 class="section-title">
+                        <span class="section-icon">💬</span>
+                        System Messages
+                        <button class="clear-console-btn" id="clearConsole" title="Clear messages">🗑️</button>
+                    </h3>
+                    <div class="system-console" id="systemConsole">
+                        <div class="console-message console-info">
+                            <span class="console-time">00:00:00</span>
+                            <span class="console-text">System initialized</span>
                         </div>
                     </div>
                 </div>
@@ -237,11 +293,15 @@
             <aside class="right-panel">
                 <!-- Drone 1 Status -->
                 <div class="panel-section drone-panel" id="drone1Panel">
-                    <h3 class="section-title drone-title">
-                        <span class="drone-icon">🛸</span>
-                        Drone 1
-                        <span class="drone-badge badge-offline" id="drone1Status">OFFLINE</span>
-                    </h3>
+                    <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 15px;">
+                        <img src="assets/scanning_drone.png" alt="Scanning Drone" style="width: 60px; height: 60px; object-fit: contain;">
+                        <div style="flex: 1;">
+                            <h3 class="section-title drone-title" style="margin: 0;">
+                                Drone 1 (Scanning)
+                                <span class="drone-badge badge-offline" id="drone1Status">OFFLINE</span>
+                            </h3>
+                        </div>
+                    </div>
                     <div style="text-align: center; margin-bottom: 10px;">
                         <span class="drone-badge badge-offline" id="drone1Armed">DISARMED</span>
                     </div>
@@ -344,11 +404,15 @@
 
                 <!-- Drone 2 Status -->
                 <div class="panel-section drone-panel" id="drone2Panel">
-                    <h3 class="section-title drone-title">
-                        <span class="drone-icon">🛸</span>
-                        Drone 2
-                        <span class="drone-badge badge-offline" id="drone2Status">OFFLINE</span>
-                    </h3>
+                    <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 15px;">
+                        <img src="assets/spray_drone.png" alt="Spray Drone" style="width: 60px; height: 60px; object-fit: contain;">
+                        <div style="flex: 1;">
+                            <h3 class="section-title drone-title" style="margin: 0;">
+                                Drone 2 (Spraying)
+                                <span class="drone-badge badge-offline" id="drone2Status">OFFLINE</span>
+                            </h3>
+                        </div>
+                    </div>
                     <div style="text-align: center; margin-bottom: 10px;">
                         <span class="drone-badge badge-offline" id="drone2Armed">DISARMED</span>
                     </div>
@@ -463,6 +527,90 @@
                     </div>
                 </div>
             </aside>
+        </div>
+
+        <!-- Bottom Panel: Testing & Detection Log -->
+        <div class="bottom-panel" id="bottomPanel">
+            <div class="bottom-panel-header" id="bottomPanelHeader">
+                <div class="bottom-panel-title">
+                    <span class="section-icon">🧪</span>
+                    Testing & Detection Log
+                </div>
+                <button class="bottom-panel-toggle" id="bottomPanelToggle">
+                    <span id="toggleIcon">▼</span>
+                </button>
+            </div>
+            
+            <div class="bottom-panel-content" id="bottomPanelContent">
+                <div class="bottom-panel-grid">
+                    <!-- Manual Detection Testing -->
+                    <div class="bottom-panel-section">
+                        <h4 class="bottom-section-title">
+                            <span>🎯</span>
+                            Manual Detection Trigger
+                        </h4>
+                        <p class="bottom-section-description">
+                            Simulate crop detection for testing. Click button while drone is flying to send current coordinates.
+                        </p>
+                        
+                        <div class="detection-trigger-controls">
+                            <div class="trigger-drone-select">
+                                <label>Select Drone:</label>
+                                <div class="drone-radio-group">
+                                    <label class="radio-label">
+                                        <input type="radio" name="triggerDrone" value="1" checked>
+                                        <span>Drone 1 (Scanning)</span>
+                                    </label>
+                                    <label class="radio-label">
+                                        <input type="radio" name="triggerDrone" value="2">
+                                        <span>Drone 2 (Spraying)</span>
+                                    </label>
+                                </div>
+                            </div>
+                            
+                            <div class="trigger-confidence">
+                                <label>Confidence Level:</label>
+                                <div class="confidence-control">
+                                    <input type="range" id="detectionConfidence" min="0" max="100" value="85" step="5">
+                                    <span class="confidence-value" id="confidenceValue">85%</span>
+                                </div>
+                            </div>
+                            
+                            <button class="btn btn-success btn-trigger" id="triggerDetection">
+                                <span class="btn-icon">🎯</span>
+                                Trigger Detection
+                            </button>
+                            
+                            <div class="trigger-info" id="triggerInfo">
+                                <span class="info-icon">ℹ️</span>
+                                <span class="info-text">Drone must be flying to trigger detection</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Detection Log -->
+                    <div class="bottom-panel-section detection-log-section">
+                        <div class="log-header">
+                            <h4 class="bottom-section-title">
+                                <span>📋</span>
+                                Detection Log
+                            </h4>
+                            <div class="log-controls">
+                                <span class="detection-count">Total: <strong id="totalDetections">0</strong></span>
+                                <button class="btn-small btn-secondary" id="clearLog">Clear</button>
+                                <button class="btn-small btn-secondary" id="exportLog">Export</button>
+                            </div>
+                        </div>
+                        
+                        <div class="detection-log-container" id="detectionLogContainer">
+                            <div class="log-empty" id="logEmpty">
+                                <span class="empty-icon">📭</span>
+                                <p>No detections yet</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 

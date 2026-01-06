@@ -3,12 +3,15 @@ const pixhawkService = require('../services/pixhawkServicePyMAVLink');
 const missionService = require('../services/missionService');
 const waypointService = require('../services/waypointService');
 
+// Track connected Raspberry Pis
+const connectedPis = new Map();
+
 /**
  * Setup all Socket.IO event handlers for PyMAVLink
  */
 function setupSocketHandlers(io) {
   io.on('connection', (socket) => {
-    logger.info(`Dashboard client connected: ${socket.id}`);
+    logger.info(`Client connected: ${socket.id}`);
     
     // Send current drone status to newly connected client
     const droneList = pixhawkService.getDroneStatusList();
@@ -21,6 +24,68 @@ function setupSocketHandlers(io) {
       } else {
         socket.emit('drone_disconnected', { drone_id: droneId });
       }
+    });
+    
+    // ========================================
+    //      Raspberry Pi Registration         |
+    // ========================================
+    
+    // Pi identifies itself
+    socket.on('pi_register', (data) => {
+      const piId = data.pi_id || socket.id;
+      logger.info(`🥧 Raspberry Pi registered: ${piId}`);
+      logger.info(`   Socket ID: ${socket.id}`);
+      logger.info(`   Total Pis connected: ${connectedPis.size + 1}`);
+      
+      connectedPis.set(piId, {
+        id: piId,
+        socket_id: socket.id,
+        connected: true,
+        connected_at: new Date().toISOString(),
+        ...data
+      });
+      
+      // Notify all clients
+      io.emit('pi_connected', { pi_id: piId });
+      logger.info(`   Broadcasted pi_connected event to all clients`);
+      
+      // Store pi_id in socket for later use
+      socket.pi_id = piId;
+    });
+    
+    // Request list of connected Pis
+    socket.on('request_pi_list', () => {
+      const piList = Array.from(connectedPis.values()).map(pi => ({
+        id: pi.id,
+        connected: pi.connected,
+        connected_at: pi.connected_at
+      }));
+      
+      socket.emit('pi_list', { pis: piList });
+      logger.info(`📋 Sent Pi list: ${piList.length} connected`);
+    });
+    
+    // System stats from Pi
+    socket.on('system_stats', (data) => {
+      const piId = data.pi_id;
+      logger.info(`📊 System stats from Pi: ${piId}`);
+      
+      // Update Pi info with stats
+      if (connectedPis.has(piId)) {
+        const pi = connectedPis.get(piId);
+        pi.stats = data.stats;
+        pi.last_stats_update = new Date().toISOString();
+      }
+      
+      // Broadcast to all clients
+      io.emit('system_stats', data);
+    });
+    
+    // Request stats from Pi
+    socket.on('request_stats', (data) => {
+      const piId = data.pi_id;
+      logger.info(`Requesting stats from Pi: ${piId}`);
+      io.emit('request_stats', data);
     });
     
     // ========================================
@@ -142,10 +207,45 @@ function setupSocketHandlers(io) {
         logger.error(` Failed to reconnect Drone ${drone_id}: ${error.message}`);
       }
     });
+    
+    // Sync with PyMAVLink service (detect already-connected drones)
+    socket.on('sync_drones', async () => {
+      logger.info('🔄 Manual sync requested');
+      try {
+        await pixhawkService.syncConnectedDrones(io);
+        socket.emit('sync_complete', { success: true });
+      } catch (error) {
+        logger.error(`Sync failed: ${error.message}`);
+        socket.emit('sync_complete', { success: false, error: error.message });
+      }
+    });
 
     // ========================================
     //      Mission Detection & Image Capture |
     // ========================================
+    
+    // Camera/Stream control - forward to Pi
+    socket.on('start_stream', (data) => {
+      logger.info(`Dashboard requesting start stream for Pi: ${data.pi_id}`);
+      io.emit('start_stream', data);
+    });
+    
+    socket.on('stop_stream', (data) => {
+      logger.info(`Dashboard requesting stop stream for Pi: ${data.pi_id}`);
+      io.emit('stop_stream', data);
+    });
+    
+    // Stream status from Pi
+    socket.on('stream_status', (data) => {
+      logger.info(`Stream status from Pi ${data.pi_id}: ${data.status}`);
+      io.emit('stream_status', data);
+    });
+    
+    // Camera frame from Pi
+    socket.on('camera_frame', (data) => {
+      // Forward camera frame to all clients
+      io.emit('camera_frame', data);
+    });
 
     socket.on('crop_detection', (data) => {
       const droneId = data.drone_id || 1;
@@ -155,10 +255,43 @@ function setupSocketHandlers(io) {
         io.emit('crop_detection', detectionData);
       }
     });
+
+    // Manual detection trigger (for testing)
+    socket.on('manual_detection', (data) => {
+      logger.info(`📍 Manual detection triggered - Drone ${data.drone_id} at [${data.latitude}, ${data.longitude}]`);
+      logger.info(`   Confidence: ${(data.confidence * 100).toFixed(1)}% | Type: ${data.type}`);
+      
+      // Save detection
+      const detectionData = missionService.saveDetection(data.drone_id, data);
+      
+      if (detectionData) {
+        // Broadcast to all clients
+        io.emit('detection', detectionData);
+        io.emit('crop_detection', detectionData);
+        
+        logger.info(`   Detection broadcasted to all clients`);
+      }
+    });
     
     socket.on('detection_status', (data) => {
       logger.info(`Detection status from Drone ${data.drone_id}: ${data.status}`);
       io.emit('detection_status', data);
+    });
+    
+    // Detection control - forward to Pi
+    socket.on('start_detection', (data) => {
+      logger.info(`Dashboard requesting start detection for Pi: ${data.pi_id}`);
+      io.emit('start_detection', data);
+    });
+    
+    socket.on('stop_detection', (data) => {
+      logger.info(`Dashboard requesting stop detection for Pi: ${data.pi_id}`);
+      io.emit('stop_detection', data);
+    });
+    
+    socket.on('get_detection_stats', (data) => {
+      logger.info(`Dashboard requesting detection stats for Pi: ${data.pi_id}`);
+      io.emit('get_detection_stats', data);
     });
     
     // ========================================
@@ -281,7 +414,27 @@ function setupSocketHandlers(io) {
     
     // Handle disconnection
     socket.on('disconnect', () => {
-      logger.info(`Dashboard client disconnected: ${socket.id}`);
+      logger.info(`Client disconnected: ${socket.id}`);
+      
+      // If this was a registered Pi, mark it as disconnected
+      if (socket.pi_id) {
+        const pi = connectedPis.get(socket.pi_id);
+        if (pi) {
+          pi.connected = false;
+          pi.disconnected_at = new Date().toISOString();
+          logger.info(`🥧 Raspberry Pi disconnected: ${socket.pi_id}`);
+          
+          // Notify all clients
+          io.emit('pi_disconnected', { pi_id: socket.pi_id });
+          
+          // Remove from map after a delay (in case it reconnects)
+          setTimeout(() => {
+            if (!pi.connected) {
+              connectedPis.delete(socket.pi_id);
+            }
+          }, 60000); // 1 minute
+        }
+      }
     });
   });
 }

@@ -291,22 +291,47 @@ class DroneConnection:
                             target_lon = target_wp.get('longitude', target_wp.get('lon', 0))
                             target_alt = target_wp.get('altitude', target_wp.get('alt', 0))
                             
-                            # Move 10% towards target each update
-                            self.telemetry['latitude'] += (target_lat - self.telemetry['latitude']) * 0.1
-                            self.telemetry['longitude'] += (target_lon - self.telemetry['longitude']) * 0.1
-                            self.telemetry['relative_altitude'] += (target_alt - self.telemetry['relative_altitude']) * 0.1
-                            self.telemetry['groundspeed'] = 2.5
-                            
-                            # Check if reached waypoint (within 2 meters)
+                            # Calculate distance to target
                             dist = self._distance_to_waypoint(target_lat, target_lon)
-                            if dist < 0.00002:  # ~2 meters in degrees
+                            
+                            # Constant speed: 2.5 m/s ≈ 0.000025 degrees per second (at equator)
+                            speed_deg_per_sec = 0.000025
+                            
+                            # If close enough to waypoint, snap to it exactly
+                            if dist <= speed_deg_per_sec * 1.5:  # Within 1.5 seconds of arrival
+                                # Snap directly to waypoint
+                                self.telemetry['latitude'] = target_lat
+                                self.telemetry['longitude'] = target_lon
+                                self.telemetry['relative_altitude'] = target_alt
+                                self.telemetry['groundspeed'] = 0
+                                
+                                # Wait a moment at waypoint, then move to next
+                                time.sleep(0.1)
                                 self.current_waypoint_index += 1
-                                logger.info(f"🎯 Simulated Drone {self.drone_id} reached waypoint {self.current_waypoint_index}")
+                                logger.info(f"🎯 Drone {self.drone_id} reached waypoint {self.current_waypoint_index}/{len(self.mission_waypoints)}")
                                 
                                 if self.current_waypoint_index >= len(self.mission_waypoints):
-                                    logger.info(f"✅ Simulated mission completed for Drone {self.drone_id}")
+                                    logger.info(f"✅ Mission completed for Drone {self.drone_id}")
                                     self.mission_active = False
                                     self.telemetry['flight_mode'] = 'LOITER'
+                            else:
+                                # Move at constant speed towards target
+                                # Calculate unit direction vector
+                                direction_lat = (target_lat - self.telemetry['latitude']) / dist
+                                direction_lon = (target_lon - self.telemetry['longitude']) / dist
+                                
+                                # Move exactly speed_deg_per_sec in that direction
+                                self.telemetry['latitude'] += direction_lat * speed_deg_per_sec
+                                self.telemetry['longitude'] += direction_lon * speed_deg_per_sec
+                                
+                                # Smooth altitude change (20% per second)
+                                alt_diff = target_alt - self.telemetry['relative_altitude']
+                                if abs(alt_diff) < 0.5:
+                                    self.telemetry['relative_altitude'] = target_alt
+                                else:
+                                    self.telemetry['relative_altitude'] += alt_diff * 0.2
+                                
+                                self.telemetry['groundspeed'] = 2.5
                         else:
                             self.telemetry['groundspeed'] = 0
                     
@@ -330,17 +355,48 @@ class DroneConnection:
         """Arm the drone with verification (or simulate)"""
         try:
             if self.simulation:
-                logger.info(f"🎮 Simulating ARM for Drone {self.drone_id}")
+                logger.info(f" Simulating ARM for Drone {self.drone_id}")
                 with self.lock:
                     self.telemetry['armed'] = True
                     self.telemetry['flight_mode'] = 'STABILIZE'
-                logger.info(f"✅ Simulated Drone {self.drone_id} armed")
-                return True
+                logger.info(f" Simulated Drone {self.drone_id} armed")
+                return {'success': True, 'message': 'Drone armed (simulated)'}
             
             current_armed = self.telemetry.get('armed', False)
             if current_armed:
-                logger.info(f" Drone {self.drone_id} already armed")
-                return True
+                logger.info(f"✓ Drone {self.drone_id} already armed")
+                return {'success': True, 'message': 'Drone already armed'}
+            
+            # Ensure drone is in STABILIZE mode before arming
+            # ArduPilot typically requires STABILIZE or GUIDED mode for arming
+            flight_mode = self.telemetry.get('flight_mode', '')
+            if flight_mode not in ['STABILIZE', 'GUIDED', 'LOITER']:
+                logger.info(f"Setting STABILIZE mode before arming (current: {flight_mode})")
+                if not self.set_mode('STABILIZE'):
+                    logger.warning(f"Failed to set STABILIZE mode, trying to arm anyway...")
+                else:
+                    time.sleep(0.5)  # Wait for mode change
+            
+            # Check pre-arm conditions
+            gps_fix = self.telemetry.get('gps_fix_type', 0)
+            satellites = self.telemetry.get('satellites_visible', 0)
+            battery_voltage = self.telemetry.get('battery_voltage', 0)
+            flight_mode = self.telemetry.get('flight_mode', '')
+            
+            # Log pre-arm status
+            logger.info(f"Pre-arm check: GPS={gps_fix} ({satellites} sats), Battery={battery_voltage:.1f}V, Mode={flight_mode}")
+            
+            # Build warning messages
+            warnings = []
+            if gps_fix < 3:
+                warnings.append(f"GPS fix quality low ({gps_fix}). Need 3D fix (type 3)")
+                logger.warning(f"  GPS fix quality low ({gps_fix}). Need 3D fix (type 3)")
+            if satellites < 8:
+                warnings.append(f"Low satellite count ({satellites}). Recommended: 8+")
+                logger.warning(f"  Low satellite count ({satellites}). Recommended: 8+")
+            if battery_voltage < 11.0:
+                warnings.append(f"Low battery voltage ({battery_voltage:.1f}V)")
+                logger.warning(f"  Low battery voltage ({battery_voltage:.1f}V)")
             
             for attempt in range(3):
                 self.master.arducopter_arm()
@@ -354,18 +410,33 @@ class DroneConnection:
                         if is_armed:
                             self.telemetry['armed'] = True
                             logger.info(f" Drone {self.drone_id} armed successfully")
-                            return True
+                            return {'success': True, 'message': 'Drone armed successfully'}
                     time.sleep(0.1)
                 
                 if attempt < 2:
-                    logger.warning(f"Arm verification attempt {attempt + 1} failed for Drone {self.drone_id}, retrying...")
+                    logger.warning(f"  Arm verification attempt {attempt + 1} failed for Drone {self.drone_id}, retrying...")
                     time.sleep(0.5)
             
-            logger.error(f"Failed to verify arm for Drone {self.drone_id} after 3 attempts")
-            return False
+            # If failed after retries, build detailed error message
+            error_details = []
+            error_details.append(f"GPS: {gps_fix} fix, {satellites} satellites")
+            error_details.append(f"Battery: {battery_voltage:.1f}V")
+            error_details.append(f"Mode: {flight_mode}")
+            
+            error_msg = "ARM failed. " + "; ".join(error_details)
+            if warnings:
+                error_msg += ". Issues: " + "; ".join(warnings)
+            
+            logger.error(f" Failed to ARM Drone {self.drone_id}")
+            logger.error(f"   GPS: {gps_fix} fix, {satellites} satellites")
+            logger.error(f"   Battery: {battery_voltage:.1f}V")
+            logger.error(f"   Mode: {flight_mode}")
+            logger.error(f"   Common causes: Bad GPS, low battery, wrong mode, safety switch, compass cal")
+            
+            return {'success': False, 'error': error_msg}
         except Exception as e:
-            logger.error(f"Failed to arm Drone {self.drone_id}: {e}")
-            return False
+            logger.error(f"ARM command failed for Drone {self.drone_id}: {e}")
+            return {'success': False, 'error': f'ARM command exception: {str(e)}'}
     
     def disarm(self):
         """Disarm the drone"""
@@ -374,24 +445,24 @@ class DroneConnection:
                 self.master.arducopter_disarm()
                 time.sleep(0.5)  # Give it time to process
                 logger.info(f" Drone {self.drone_id} disarmed")
-                return True
+                return {'success': True, 'message': 'Drone disarmed'}
             except Exception as e:
                 if attempt < 2:
                     logger.warning(f"Disarm attempt {attempt + 1} failed for Drone {self.drone_id}, retrying...")
                     time.sleep(0.5)
                 else:
                     logger.error(f"Failed to disarm Drone {self.drone_id} after 3 attempts: {e}")
-                    return False
-        return False
+                    return {'success': False, 'error': f'Disarm failed: {str(e)}'}
+        return {'success': False, 'error': 'Disarm failed after 3 attempts'}
     
     def set_mode(self, mode_name):
         """Set flight mode with confirmation (or simulate)"""
         try:
             if self.simulation:
-                logger.info(f"🎮 Simulating mode change to {mode_name} for Drone {self.drone_id}")
+                logger.info(f" Simulating mode change to {mode_name} for Drone {self.drone_id}")
                 with self.lock:
                     self.telemetry['flight_mode'] = mode_name.upper()
-                logger.info(f"✅ Simulated Drone {self.drone_id} mode: {mode_name}")
+                logger.info(f" Simulated Drone {self.drone_id} mode: {mode_name}")
                 return True
             
             # Get mode ID
@@ -451,7 +522,7 @@ class DroneConnection:
                 0,  # longitude (0 = current)
                 altitude  # altitude in meters
             )
-            logger.info(f"✅ Takeoff command sent to Drone {self.drone_id} (altitude={altitude}m)")
+            logger.info(f" Takeoff command sent to Drone {self.drone_id} (altitude={altitude}m)")
             
             # Wait for acknowledgment
             ack_received = False
@@ -459,15 +530,15 @@ class DroneConnection:
                 msg = self.master.recv_match(type='COMMAND_ACK', timeout=0.5)
                 if msg and msg.command == mavutil.mavlink.MAV_CMD_NAV_TAKEOFF:
                     if msg.result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
-                        logger.info(f"✅ Takeoff ACK received for Drone {self.drone_id}")
+                        logger.info(f" Takeoff ACK received for Drone {self.drone_id}")
                         ack_received = True
                         break
                     else:
-                        logger.error(f"❌ Takeoff command rejected: {msg.result}")
+                        logger.error(f" Takeoff command rejected: {msg.result}")
                         return False
             
             if not ack_received:
-                logger.warning(f"⚠️ No immediate ACK for takeoff, but command was sent")
+                logger.warning(f" No immediate ACK for takeoff, but command was sent")
             
             return True
         except Exception as e:
@@ -484,7 +555,7 @@ class DroneConnection:
                 0,
                 0, 0, 0, 0, 0, 0, 0
             )
-            logger.info(f"✅ Land command sent to Drone {self.drone_id}")
+            logger.info(f" Land command sent to Drone {self.drone_id}")
             return True
         except Exception as e:
             logger.error(f"Failed to land Drone {self.drone_id}: {e}")
@@ -540,6 +611,127 @@ class DroneConnection:
             logger.error(f"Failed to navigate Drone {self.drone_id}: {e}")
             return False
     
+    def _convert_command_to_int(self, cmd):
+        """Convert command (int or string) to integer constant"""
+        if isinstance(cmd, int):
+            return cmd
+        if isinstance(cmd, str):
+            # Map common string names to MAVLink constants
+            cmd_upper = cmd.upper()
+            if 'TAKEOFF' in cmd_upper:
+                return mavutil.mavlink.MAV_CMD_NAV_TAKEOFF
+            elif 'WAYPOINT' in cmd_upper:
+                return mavutil.mavlink.MAV_CMD_NAV_WAYPOINT
+            elif 'LAND' in cmd_upper:
+                return mavutil.mavlink.MAV_CMD_NAV_LAND
+            elif 'LOITER' in cmd_upper:
+                return mavutil.mavlink.MAV_CMD_NAV_LOITER_UNLIM
+            else:
+                logger.warning(f"Unknown command string: {cmd}, defaulting to NAV_WAYPOINT")
+                return mavutil.mavlink.MAV_CMD_NAV_WAYPOINT
+        return mavutil.mavlink.MAV_CMD_NAV_WAYPOINT
+
+    def _upload_mission_event_driven(self, full_mission, first_request_msg):
+        """Upload waypoints using request-driven protocol (drone requests each waypoint)"""
+        logger.info(f"  Starting request-driven upload ({len(full_mission)} waypoints)...")
+        uploaded = set()
+        request_count = 1  # Already received first request
+        last_request_time = time.time()
+        overall_timeout = max(30, len(full_mission) * 3)
+        upload_start = time.time()
+
+        # Send first waypoint from initial request
+        seq = getattr(first_request_msg, 'seq', 0)
+        if seq < len(full_mission):
+            wp = full_mission[seq]
+            cmd = self._convert_command_to_int(wp.get('command', mavutil.mavlink.MAV_CMD_NAV_WAYPOINT))
+            lat = float(wp.get('latitude', wp.get('lat', 0)))
+            lon = float(wp.get('longitude', wp.get('lon', 0)))
+            alt = float(wp.get('altitude', wp.get('alt', 0)))
+            
+            self.master.mav.mission_item_send(
+                self.master.target_system,
+                self.master.target_component,
+                int(seq), mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,
+                int(cmd), 0, 1, 0, 0, 0, 0, lat, lon, alt
+            )
+            cmd_name = "TAKEOFF" if cmd == mavutil.mavlink.MAV_CMD_NAV_TAKEOFF else "WAYPOINT"
+            logger.info(f"  ✓ {cmd_name} {seq+1}/{len(full_mission)} uploaded")
+            uploaded.add(seq)
+
+        # Wait for remaining requests
+        while time.time() - upload_start < overall_timeout:
+            msg = self.master.recv_match(blocking=True, timeout=2)
+            if msg is None:
+                continue
+
+            msg_type = msg.get_type()
+
+            if msg_type in ('MISSION_REQUEST', 'MISSION_REQUEST_INT'):
+                request_count += 1
+                last_request_time = time.time()
+                seq = getattr(msg, 'seq', None)
+                
+                if seq is None or seq < 0 or seq >= len(full_mission):
+                    logger.warning(f"  Invalid request seq={seq}, ignoring")
+                    continue
+
+                if seq in uploaded:
+                    logger.debug(f"  Waypoint {seq} already uploaded, re-sending...")
+
+                wp = full_mission[seq]
+                cmd = self._convert_command_to_int(wp.get('command', mavutil.mavlink.MAV_CMD_NAV_WAYPOINT))
+                lat = float(wp.get('latitude', wp.get('lat', 0)))
+                lon = float(wp.get('longitude', wp.get('lon', 0)))
+                alt = float(wp.get('altitude', wp.get('alt', 0)))
+
+                self.master.mav.mission_item_send(
+                    self.master.target_system,
+                    self.master.target_component,
+                    int(seq), mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,
+                    int(cmd), 0, 1, 0, 0, 0, 0, lat, lon, alt
+                )
+                cmd_name = "TAKEOFF" if cmd == mavutil.mavlink.MAV_CMD_NAV_TAKEOFF else "WAYPOINT"
+                logger.info(f"  ✓ {cmd_name} {seq+1}/{len(full_mission)} uploaded (request #{request_count})")
+                uploaded.add(seq)
+
+            elif msg_type == 'MISSION_ACK':
+                logger.info(f"  Received MISSION_ACK during request-driven upload")
+                return uploaded if len(uploaded) > 0 else False
+
+        logger.error(f"  Request-driven upload timed out with {len(uploaded)}/{len(full_mission)} waypoints")
+        return False
+
+    def _upload_mission_send_all(self, full_mission):
+        """Upload waypoints using send-all protocol (send all waypoints sequentially without requests)"""
+        logger.info(f"  Starting send-all upload ({len(full_mission)} waypoints)...")
+        uploaded = set()
+
+        for seq in range(len(full_mission)):
+            wp = full_mission[seq]
+            cmd = self._convert_command_to_int(wp.get('command', mavutil.mavlink.MAV_CMD_NAV_WAYPOINT))
+            lat = float(wp.get('latitude', wp.get('lat', 0)))
+            lon = float(wp.get('longitude', wp.get('lon', 0)))
+            alt = float(wp.get('altitude', wp.get('alt', 0)))
+
+            try:
+                self.master.mav.mission_item_send(
+                    self.master.target_system,
+                    self.master.target_component,
+                    int(seq), mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,
+                    int(cmd), 0, 1, 0, 0, 0, 0, lat, lon, alt
+                )
+                cmd_name = "TAKEOFF" if cmd == mavutil.mavlink.MAV_CMD_NAV_TAKEOFF else "WAYPOINT"
+                logger.info(f"  ✓ {cmd_name} {seq+1}/{len(full_mission)} uploaded")
+                uploaded.add(seq)
+                time.sleep(0.05)  # Small delay between sends
+            except Exception as e:
+                logger.error(f"  ❌ Failed to send waypoint {seq}: {e}")
+                return False
+
+        logger.info(f"  All {len(uploaded)} waypoints sent; waiting for MISSION_ACK...")
+        return uploaded if len(uploaded) == len(full_mission) else False
+
     def upload_mission_waypoints(self, waypoints):
         """Upload mission waypoints to drone (or simulate)"""
         try:
@@ -548,64 +740,145 @@ class DroneConnection:
                 return False
             
             self.mission_waypoints = waypoints
-            logger.info(f"📥 Uploading {len(waypoints)} waypoints to Drone {self.drone_id}")
+            
+            # Get first survey point coordinates
+            first_lat = waypoints[0].get('latitude', waypoints[0].get('lat', 0))
+            first_lon = waypoints[0].get('longitude', waypoints[0].get('lon', 0))
+            takeoff_alt = waypoints[0].get('altitude', waypoints[0].get('alt', 15))
+            
+            # Waypoint 0: Navigate to start point at low altitude (5m)
+            # This ensures drone flies horizontally to mission start before takeoff
+            nav_to_start = {
+                'latitude': first_lat,
+                'longitude': first_lon,
+                'altitude': 5,  # Low altitude during horizontal transit
+                'command': mavutil.mavlink.MAV_CMD_NAV_WAYPOINT
+            }
+            
+            # Waypoint 1: Takeoff at start point to mission altitude
+            takeoff_waypoint = {
+                'latitude': first_lat,
+                'longitude': first_lon,
+                'altitude': takeoff_alt,
+                'command': mavutil.mavlink.MAV_CMD_NAV_TAKEOFF
+            }
+            
+            # Prepend navigation and takeoff to mission
+            full_mission = [nav_to_start, takeoff_waypoint] + waypoints
+            
+            logger.info(f" Uploading {len(full_mission)} waypoints (including TAKEOFF) to Drone {self.drone_id}")
             
             if self.simulation:
-                logger.info(f"🎮 SIMULATION: Pretending to upload {len(waypoints)} waypoints...")
+                logger.info(f" SIMULATION: Pretending to upload {len(full_mission)} waypoints...")
                 # Simulate upload delay
-                for i, wp in enumerate(waypoints):
+                for i, wp in enumerate(full_mission):
                     if i % 10 == 0:  # Log every 10th waypoint
-                        logger.info(f"  📍 Simulated upload: waypoint {i+1}/{len(waypoints)}")
+                        logger.info(f"  Simulated upload: waypoint {i+1}/{len(full_mission)}")
                     time.sleep(0.01)  # Small delay to simulate upload time
                 
-                logger.info(f"✅ Simulated mission upload successful for Drone {self.drone_id}")
+                logger.info(f" Simulated mission upload successful for Drone {self.drone_id}")
                 return True
             
-            # Clear existing mission
-            self.master.waypoint_clear_all_send()
-            time.sleep(0.5)
+            # CRITICAL: Pause telemetry loop to prevent it from consuming MISSION_REQUEST messages
+            was_running = self.running
+            self.running = False
+            time.sleep(0.5)  # Give telemetry thread time to stop
+            logger.info(f" Paused telemetry loop for Drone {self.drone_id} to upload mission")
             
-            # Send waypoint count
-            self.master.waypoint_count_send(len(waypoints))
-            time.sleep(0.3)
-            
-            # Upload each waypoint
-            for i, wp in enumerate(waypoints):
-                # Wait for waypoint request
-                msg = self.master.recv_match(type='MISSION_REQUEST', blocking=True, timeout=5)
-                if msg and msg.seq == i:
-                    self.master.mav.mission_item_send(
-                        self.master.target_system,
-                        self.master.target_component,
-                        i,  # seq
-                        mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,
-                        mavutil.mavlink.MAV_CMD_NAV_WAYPOINT,
-                        0,  # current (0=not current, 1=current waypoint)
-                        1,  # autocontinue
-                        0,  # param1 (hold time)
-                        0,  # param2 (acceptance radius)
-                        0,  # param3 (pass through)
-                        0,  # param4 (yaw)
-                        wp['latitude'],
-                        wp['longitude'],
-                        wp['altitude']
-                    )
-                    logger.info(f"  Waypoint {i+1}/{len(waypoints)} uploaded")
-                else:
-                    logger.error(f"No request received for waypoint {i}")
-                    return False
-            
-            # Wait for mission ACK
-            msg = self.master.recv_match(type='MISSION_ACK', blocking=True, timeout=5)
-            if msg and msg.type == mavutil.mavlink.MAV_MISSION_ACCEPTED:
-                logger.info(f" Mission uploaded successfully to Drone {self.drone_id}")
-                return True
-            else:
-                logger.error(f"Mission upload failed or not acknowledged")
+            try:
+                # Clear existing mission
+                logger.info(f"  Sending MISSION_CLEAR_ALL to Drone {self.drone_id}")
+                self.master.waypoint_clear_all_send()
+                time.sleep(1.0)  # Wait for clear to complete
+
+                # Flush any pending messages from clear_all
+                logger.info(f"  Flushing pending messages...")
+                flush_start = time.time()
+                while time.time() - flush_start < 0.5:
+                    msg = self.master.recv_match(blocking=False, timeout=0.1)
+                    if msg:
+                        msg_type = msg.get_type()
+                        logger.debug(f"    Flushed: {msg_type}")
+
+                # Send waypoint count
+                logger.info(f"  Sending MISSION_COUNT={len(full_mission)} to Drone {self.drone_id}")
+                self.master.waypoint_count_send(len(full_mission))
+                time.sleep(0.2)
+
+                # Try request-driven approach first: wait for MISSION_REQUEST messages
+                logger.info(f"  Attempting request-driven upload (waiting for MISSION_REQUEST)...")
+                uploaded = set()
+                upload_start = time.time()
+                request_timeout = 3  # Wait 3s for first request
+                last_request_time = time.time()
+
+                # Wait for at least one MISSION_REQUEST to know if this protocol works
+                while time.time() - last_request_time < request_timeout:
+                    msg = self.master.recv_match(blocking=True, timeout=0.5)
+                    if msg is None:
+                        continue
+
+                    msg_type = msg.get_type()
+
+                    if msg_type in ('MISSION_REQUEST', 'MISSION_REQUEST_INT'):
+                        # Drone is using request-driven protocol - proceed normally
+                        logger.info(f"  ✓ Drone using REQUEST-DRIVEN protocol")
+                        seq = getattr(msg, 'seq', None)
+                        if seq == 0:
+                            # Good, drone is asking for waypoint 0 - use event loop
+                            uploaded = self._upload_mission_event_driven(full_mission, msg)
+                            if uploaded is False:
+                                return False
+                            # Check if all waypoints were uploaded
+                            if isinstance(uploaded, set) and len(uploaded) == len(full_mission):
+                                logger.info(f"  ✅ Mission SUCCESSFULLY uploaded to Drone {self.drone_id} ({len(uploaded)}/{len(full_mission)} waypoints)")
+                                return True
+                            break
+                    elif msg_type == 'MISSION_ACK':
+                        # Drone accepted empty mission - drone is not using request-driven protocol
+                        logger.info(f"  ⚠ Drone sent MISSION_ACK without requesting waypoints")
+                        logger.info(f"  ✓ Drone using SEND-ALL protocol (proactive push)")
+                        # Send all waypoints proactively
+                        uploaded = self._upload_mission_send_all(full_mission)
+                        if uploaded is False:
+                            return False
+                        break
+
+                if not uploaded:
+                    logger.warning(f"  Upload protocol detection timed out; trying send-all approach...")
+                    uploaded = self._upload_mission_send_all(full_mission)
+                    if uploaded is False:
+                        return False
+
+                # Verify final ACK (only if we haven't already succeeded)
+                logger.info(f"  Waiting for final MISSION_ACK confirmation...")
+                ack_start = time.time()
+                while time.time() - ack_start < 5:
+                    msg = self.master.recv_match(blocking=True, timeout=1)
+                    if msg and msg.get_type() == 'MISSION_ACK':
+                        ack_type = getattr(msg, 'type', None)
+                        logger.info(f"  Received MISSION_ACK: type={ack_type} (ACCEPTED=0, ERROR=15)")
+                        if ack_type == 0 or ack_type == mavutil.mavlink.MAV_MISSION_ACCEPTED:
+                            logger.info(f"  ✅ Mission SUCCESSFULLY uploaded to Drone {self.drone_id} ({len(uploaded)}/{len(full_mission)} waypoints)")
+                            return True
+                        else:
+                            logger.error(f"  ❌ Mission rejected: MISSION_ACK type {ack_type}")
+                            return False
+
+                logger.error(f"  ❌ No MISSION_ACK received within timeout")
                 return False
+                    
+            finally:
+                # Resume telemetry loop after mission upload
+                self.running = was_running
+                if was_running:
+                    logger.info(f"  ✓ Resumed telemetry loop for Drone {self.drone_id}")
+                else:
+                    logger.info(f"  Telemetry loop was not running; leaving paused")
                 
         except Exception as e:
             logger.error(f"Failed to upload mission to Drone {self.drone_id}: {e}")
+            self.running = was_running  # Ensure telemetry is resumed even on exception
             return False
     
     def start_mission(self):
@@ -613,38 +886,48 @@ class DroneConnection:
         try:
             if not self.mission_waypoints:
                 logger.error(f"No mission uploaded for Drone {self.drone_id}")
-                return False
+                return {'success': False, 'error': 'No mission uploaded. Upload waypoints first.'}
             
             # Check if armed
             if not self.telemetry.get('armed', False):
                 logger.warning(f"Drone {self.drone_id} not armed! Cannot start mission.")
-                return False
+                return {'success': False, 'error': 'Drone not armed. ARM the drone before starting mission.'}
             
             if self.simulation:
-                logger.info(f"🎮 Simulating mission START for Drone {self.drone_id}")
+                logger.info(f" Simulating mission START for Drone {self.drone_id}")
                 with self.lock:
                     self.telemetry['flight_mode'] = 'AUTO'
                     self.mission_active = True
                     self.current_waypoint_index = 0
-                logger.info(f"✅ Simulated mission started for Drone {self.drone_id} ({len(self.mission_waypoints)} waypoints)")
-                return True
+                logger.info(f" Simulated mission started for Drone {self.drone_id} ({len(self.mission_waypoints)} waypoints)")
+                return {'success': True, 'message': f'Mission started (simulated) - {len(self.mission_waypoints)} waypoints'}
             
-            # Set to AUTO mode to start mission
+            # Step 1: Set to GUIDED mode first (required before AUTO)
+            current_mode = self.telemetry.get('flight_mode', '')
+            if 'GUIDED' not in current_mode.upper():
+                logger.info(f" Setting GUIDED mode before mission start...")
+                mode_result = self.set_mode('GUIDED')
+                if not mode_result:
+                    logger.error(f"Failed to set GUIDED mode")
+                    return {'success': False, 'error': f'Failed to set GUIDED mode. Current mode: {current_mode}'}
+                time.sleep(1.0)  # Wait for mode change
+            
+            # Step 2: Set to AUTO mode to start mission
             logger.info(f" Starting AUTO mission for Drone {self.drone_id}")
             success = self.set_mode('AUTO')
             
             if success:
                 self.mission_active = True
                 self.current_waypoint_index = 0
-                logger.info(f" Mission started for Drone {self.drone_id}")
-                return True
+                logger.info(f" Mission started for Drone {self.drone_id} (TAKEOFF + {len(self.mission_waypoints)} waypoints)")
+                return {'success': True, 'message': f'Mission started - {len(self.mission_waypoints)} waypoints'}
             else:
                 logger.error(f"Failed to set AUTO mode for Drone {self.drone_id}")
-                return False
+                return {'success': False, 'error': f'Failed to set AUTO mode. Current mode: {self.telemetry.get("flight_mode", "UNKNOWN")}'}
                 
         except Exception as e:
             logger.error(f"Failed to start mission for Drone {self.drone_id}: {e}")
-            return False
+            return {'success': False, 'error': f'Mission start exception: {str(e)}'}
     
     def pause_mission(self):
         """Pause mission by switching to LOITER"""
@@ -668,18 +951,25 @@ class DroneConnection:
             return False
     
     def stop_mission(self):
-        """Stop mission and clear waypoints"""
+        """Stop mission and RTL (Return to Launch)"""
         try:
             logger.info(f" Stopping mission for Drone {self.drone_id}")
             self.mission_active = False
-            # Switch to LOITER to stop
-            self.set_mode('LOITER')
+            
+            # Switch to RTL to return home
+            logger.info(f" Initiating RTL (Return to Launch) for Drone {self.drone_id}")
+            self.set_mode('RTL')
             time.sleep(0.5)
+            
             # Clear mission from drone
-            self.master.waypoint_clear_all_send()
+            if self.simulation:
+                logger.info(f" Simulation: Cleared mission for Drone {self.drone_id}")
+            else:
+                self.master.waypoint_clear_all_send()
+            
             self.mission_waypoints = []
             self.current_waypoint_index = 0
-            logger.info(f" Mission stopped for Drone {self.drone_id}")
+            logger.info(f" Mission stopped, drone returning to launch for Drone {self.drone_id}")
             return True
         except Exception as e:
             logger.error(f"Failed to stop mission: {e}")
@@ -834,25 +1124,37 @@ def get_telemetry(drone_id):
     """Get telemetry for a specific drone"""
     if drone_id not in drones:
         return jsonify({'error': 'Drone not found'}), 404
-    
-    if not drones[drone_id].connected:
-        return jsonify({'error': 'Drone not connected'}), 400
-    
-    telemetry = drones[drone_id].get_telemetry()
-    
+
+    drone = drones[drone_id]
+    telemetry = drone.get_telemetry() if hasattr(drone, 'get_telemetry') else {}
+
     # Add debug info
     debug_info = {
-        'simulation_mode': drones[drone_id].simulation,
+        'simulation_mode': drone.simulation,
+        'connected': drone.connected,
         'has_gps_data': telemetry.get('satellites_visible', 0) > 0,
         'has_battery_data': telemetry.get('battery_voltage', 0) > 0,
         'has_position_data': telemetry.get('latitude', 0) != 0 or telemetry.get('longitude', 0) != 0,
         'has_altitude_data': telemetry.get('relative_altitude', 0) != 0 or telemetry.get('altitude', 0) != 0,
-        'data_age_seconds': time.time() - telemetry.get('timestamp', time.time())
+        'data_age_seconds': time.time() - telemetry.get('timestamp', time.time()) if telemetry else None
     }
-    
+
+    if not drone.connected:
+        logger.warning(f"/telemetry requested for Drone {drone_id} but it's not connected; returning last-known telemetry")
+        return jsonify({
+            'drone_id': drone_id,
+            'connected': False,
+            'simulation': drone.simulation,
+            'telemetry': telemetry,
+            'timestamp': telemetry.get('timestamp', time.time()) if telemetry else time.time(),
+            'debug': debug_info,
+            'message': 'Drone not connected; returning last-known telemetry if available'
+        }), 200
+
     return jsonify({
         'drone_id': drone_id,
-        'simulation': drones[drone_id].simulation,
+        'connected': True,
+        'simulation': drone.simulation,
         'telemetry': telemetry,
         'timestamp': telemetry.get('timestamp', time.time()),
         'debug': debug_info
@@ -864,41 +1166,50 @@ def debug_telemetry(drone_id):
     """Debug endpoint to see raw telemetry data"""
     if drone_id not in drones:
         return jsonify({'error': 'Drone not found'}), 404
-    
-    if not drones[drone_id].connected:
-        return jsonify({'error': 'Drone not connected'}), 400
-    
-    telemetry = drones[drone_id].get_telemetry()
-    
+
+    drone = drones[drone_id]
+    telemetry = drone.get_telemetry() if hasattr(drone, 'get_telemetry') else {}
+
     # Return formatted for easy reading
-    return jsonify({
+    payload = {
         'drone_id': drone_id,
-        'connected': drones[drone_id].connected,
-        'running': drones[drone_id].running,
+        'connected': drone.connected,
+        'running': drone.running,
         'telemetry_fields': list(telemetry.keys()),
         'telemetry_values': telemetry,
         'non_zero_fields': {k: v for k, v in telemetry.items() if v not in [0, 0.0, False, 'UNKNOWN', '']}
-    })
+    }
+
+    if not drone.connected:
+        payload['message'] = 'Drone not connected; returning last-known telemetry (if any)'
+
+    return jsonify(payload)
 
 
 @app.route('/drone/<int:drone_id>/arm', methods=['POST'])
 def arm_drone(drone_id):
     """Arm a drone"""
     if drone_id not in drones or not drones[drone_id].connected:
-        return jsonify({'error': 'Drone not connected'}), 404
+        return jsonify({'success': False, 'error': 'Drone not connected', 'command': 'arm'}), 404
     
-    success = drones[drone_id].arm()
-    return jsonify({'success': success, 'command': 'arm'})
+    result = drones[drone_id].arm()
+    if result['success']:
+        return jsonify({'success': True, 'command': 'arm', 'message': result.get('message', 'Armed')})
+    else:
+        return jsonify({'success': False, 'command': 'arm', 'error': result.get('error', 'ARM failed')}), 400
 
 
 @app.route('/drone/<int:drone_id>/disarm', methods=['POST'])
 def disarm_drone(drone_id):
     """Disarm a drone"""
     if drone_id not in drones or not drones[drone_id].connected:
-        return jsonify({'error': 'Drone not connected'}), 404
+        return jsonify({'success': False, 'error': 'Drone not connected', 'command': 'disarm'}), 404
     
-    success = drones[drone_id].disarm()
-    return jsonify({'success': success, 'command': 'disarm'})
+    result = drones[drone_id].disarm()
+    if result['success']:
+        return jsonify({'success': True, 'command': 'disarm', 'message': result.get('message', 'Disarmed')})
+    else:
+        return jsonify({'success': False, 'command': 'disarm', 'error': result.get('error', 'Disarm failed')}), 400
 
 
 @app.route('/drone/<int:drone_id>/mode', methods=['POST'])
@@ -992,10 +1303,13 @@ def upload_mission(drone_id):
 def start_mission(drone_id):
     """Start the uploaded mission"""
     if drone_id not in drones or not drones[drone_id].connected:
-        return jsonify({'error': 'Drone not connected'}), 404
+        return jsonify({'success': False, 'error': 'Drone not connected', 'command': 'mission_start'}), 404
     
-    success = drones[drone_id].start_mission()
-    return jsonify({'success': success, 'command': 'mission_start'})
+    result = drones[drone_id].start_mission()
+    if result['success']:
+        return jsonify({'success': True, 'command': 'mission_start', 'message': result.get('message', 'Mission started')})
+    else:
+        return jsonify({'success': False, 'command': 'mission_start', 'error': result.get('error', 'Mission start failed')}), 400
 
 
 @app.route('/drone/<int:drone_id>/mission/pause', methods=['POST'])
@@ -1041,9 +1355,126 @@ def mission_status(drone_id):
     })
 
 
+# ========================================
+#    Long-Range Pi Control via MAVLink   |
+# ========================================
+
+@app.route('/drone/<int:drone_id>/pi/start_detection', methods=['POST'])
+def pi_start_detection(drone_id):
+    """Send MAVLink command to Pi to start detection (long-range control)"""
+    if drone_id not in drones or not drones[drone_id].connected:
+        return jsonify({'error': 'Drone not connected'}), 404
+    
+    try:
+        # Send custom MAVLink command 42000 = Start Detection
+        drones[drone_id].master.mav.command_long_send(
+            drones[drone_id].master.target_system,
+            drones[drone_id].master.target_component,
+            42000,  # Custom command ID for start detection
+            0,      # confirmation
+            0, 0, 0, 0, 0, 0, 0  # params
+        )
+        
+        logger.info(f"📡 Sent MAVLink command: Start Detection to Drone {drone_id}")
+        
+        # Wait for ACK
+        ack = drones[drone_id].master.recv_match(type='COMMAND_ACK', blocking=True, timeout=3.0)
+        if ack and ack.command == 42000:
+            success = ack.result == mavutil.mavlink.MAV_RESULT_ACCEPTED
+            return jsonify({
+                'success': success,
+                'command': 'start_detection',
+                'drone_id': drone_id,
+                'ack_result': ack.result
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'command': 'start_detection',
+                'drone_id': drone_id,
+                'error': 'No ACK received'
+            })
+            
+    except Exception as e:
+        logger.error(f"Failed to send start detection command: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/drone/<int:drone_id>/pi/stop_detection', methods=['POST'])
+def pi_stop_detection(drone_id):
+    """Send MAVLink command to Pi to stop detection"""
+    if drone_id not in drones or not drones[drone_id].connected:
+        return jsonify({'error': 'Drone not connected'}), 404
+    
+    try:
+        # Send custom MAVLink command 42001 = Stop Detection
+        drones[drone_id].master.mav.command_long_send(
+            drones[drone_id].master.target_system,
+            drones[drone_id].master.target_component,
+            42001,  # Custom command ID for stop detection
+            0,      # confirmation
+            0, 0, 0, 0, 0, 0, 0  # params
+        )
+        
+        logger.info(f"📡 Sent MAVLink command: Stop Detection to Drone {drone_id}")
+        
+        # Wait for ACK
+        ack = drones[drone_id].master.recv_match(type='COMMAND_ACK', blocking=True, timeout=3.0)
+        if ack and ack.command == 42001:
+            success = ack.result == mavutil.mavlink.MAV_RESULT_ACCEPTED
+            return jsonify({
+                'success': success,
+                'command': 'stop_detection',
+                'drone_id': drone_id,
+                'ack_result': ack.result
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'command': 'stop_detection',
+                'drone_id': drone_id,
+                'error': 'No ACK received'
+            })
+            
+    except Exception as e:
+        logger.error(f"Failed to send stop detection command: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/drone/<int:drone_id>/pi/request_stats', methods=['POST'])
+def pi_request_stats(drone_id):
+    """Request detection statistics from Pi via MAVLink"""
+    if drone_id not in drones or not drones[drone_id].connected:
+        return jsonify({'error': 'Drone not connected'}), 404
+    
+    try:
+        # Send custom MAVLink command 42002 = Request Stats
+        drones[drone_id].master.mav.command_long_send(
+            drones[drone_id].master.target_system,
+            drones[drone_id].master.target_component,
+            42002,  # Custom command ID for request stats
+            0,      # confirmation
+            0, 0, 0, 0, 0, 0, 0  # params
+        )
+        
+        logger.info(f"📡 Sent MAVLink command: Request Stats to Drone {drone_id}")
+        
+        return jsonify({
+            'success': True,
+            'command': 'request_stats',
+            'drone_id': drone_id,
+            'note': 'Stats will be sent via Socket.IO when available'
+        })
+            
+    except Exception as e:
+        logger.error(f"Failed to send request stats command: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 if __name__ == '__main__':
     logger.info("🚀 Starting PyMAVLink Service...")
     logger.info("📡 Service will listen on http://0.0.0.0:5000")
+    logger.info("🌾 Long-range Pi control enabled via MAVLink (commands 42000-42999)")
     
     # Start Flask server
     app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)

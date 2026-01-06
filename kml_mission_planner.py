@@ -4,14 +4,22 @@ KML Mission Planner for NIdar Competition
 Parses KML boundary file and generates survey mission waypoints
 """
 
-
+import sys
 import xml.etree.ElementTree as ET
 import json
 import math
 from pathlib import Path
 from typing import List, Tuple
 import argparse
-from shapely.geometry import Polygon, LineString, Point
+
+# Try to import shapely, provide helpful error if missing
+try:
+    from shapely.geometry import Polygon, LineString, Point
+except ImportError as e:
+    print("ERROR: shapely library is not installed!", file=sys.stderr)
+    print("Please install it with: pip install shapely", file=sys.stderr)
+    print(f"Import error details: {e}", file=sys.stderr)
+    sys.exit(1)
 
 class KMLMissionPlanner:
     """Generate survey mission from KML boundary"""
@@ -36,7 +44,7 @@ class KMLMissionPlanner:
         self.ground_width_m = self._calculate_ground_width(altitude_m)
         self.swath_width_m = self.ground_width_m * (1 - lateral_overlap)
         
-        print(f" Mission Parameters:")
+        print(f"[INFO] Mission Parameters:")
         print(f"   Altitude: {altitude_m}m")
         print(f"   Speed: {speed_ms} m/s")
         print(f"   Ground coverage width: {self.ground_width_m:.1f}m")
@@ -86,7 +94,7 @@ class KMLMissionPlanner:
         if len(boundary) < 3:
             raise ValueError("Boundary must have at least 3 points")
         
-        print(f"\n📍 KML Boundary parsed: {len(boundary)} points")
+        print(f"\n[GPS] KML Boundary parsed: {len(boundary)} points")
         print(f"   SW corner: {min(boundary, key=lambda x: x[0])[0]:.6f}, {min(boundary, key=lambda x: x[1])[1]:.6f}")
         print(f"   NE corner: {max(boundary, key=lambda x: x[0])[0]:.6f}, {max(boundary, key=lambda x: x[1])[1]:.6f}")
         
@@ -137,7 +145,7 @@ class KMLMissionPlanner:
         center_lon = (min_lon + max_lon) / 2
         field_length_m = self.lat_lon_to_meters(min_lat, center_lon, max_lat, center_lon)
         field_width_m = self.lat_lon_to_meters(center_lat, min_lon, center_lat, max_lon)
-        print(f"\n🌾 Field Dimensions:")
+        print(f"\n[FIELD] Field Dimensions:")
         print(f"   Length: {field_length_m:.0f}m ({field_length_m/1609.34*5280:.0f} ft)")
         print(f"   Width: {field_width_m:.0f}m ({field_width_m/1609.34*5280:.0f} ft)")
         print(f"   Area: {poly.area:.6f} (deg², not meters²)")
@@ -208,7 +216,7 @@ class KMLMissionPlanner:
         total_distance = pass_count * field_width_m
         mission_time_s = total_distance / self.speed_ms
         mission_time_min = mission_time_s / 60
-        print(f"\n  Mission Estimate:")
+        print(f"\n[MISSION] Mission Estimate:")
         print(f"   Total waypoints: {len(waypoints)}")
         print(f"   Passes: {pass_count}")
         print(f"   Flight distance: {total_distance:.0f}m")
@@ -252,7 +260,7 @@ class KMLMissionPlanner:
         with open(output_file, 'w') as f:
             json.dump(mission, f, indent=2)
         
-        print(f"\n✅ Mission file created: {output_file}")
+        print(f"\n[OK] Mission file created: {output_file}")
         return output_file
 
 def main():
@@ -270,6 +278,13 @@ def main():
     args = parser.parse_args()
     
     try:
+        # Verify input file exists
+        if not Path(args.kml_file).exists():
+            print(f"ERROR: KML file not found: {args.kml_file}", file=sys.stderr)
+            return 1
+        
+        print(f"Processing KML file: {args.kml_file}", file=sys.stderr)
+        
         # Create planner
         planner = KMLMissionPlanner(
             altitude_m=args.altitude,
@@ -286,10 +301,26 @@ def main():
         # Create mission file
         planner.create_mission_file(waypoints, metadata, args.output)
         
-        print(f"\n Ready to fly! Upload {args.output} to dashboard")
+        print(f"\n[OK] Ready to fly! Upload {args.output} to dashboard")
         
+    except ImportError as e:
+        print(f"\n[ERROR] Missing Python library: {e}", file=sys.stderr)
+        print("Please install required libraries with: pip install shapely", file=sys.stderr)
+        return 1
+    except FileNotFoundError as e:
+        print(f"\n[ERROR] File not found: {e}", file=sys.stderr)
+        return 1
+    except ET.ParseError as e:
+        print(f"\n[ERROR] Invalid KML file format: {e}", file=sys.stderr)
+        return 1
+    except ValueError as e:
+        print(f"\n[ERROR] Invalid data: {e}", file=sys.stderr)
+        return 1
     except Exception as e:
-        print(f"\n Error: {e}")
+        print(f"\n[ERROR] {type(e).__name__}: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+        return 1
         return 1
     
     return 0
