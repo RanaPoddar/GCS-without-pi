@@ -561,17 +561,17 @@ class DroneConnection:
             # Prepend takeoff to mission
             full_mission = [takeoff_waypoint] + waypoints
             
-            logger.info(f"📥 Uploading {len(full_mission)} waypoints (including TAKEOFF) to Drone {self.drone_id}")
+            logger.info(f" Uploading {len(full_mission)} waypoints (including TAKEOFF) to Drone {self.drone_id}")
             
             if self.simulation:
-                logger.info(f"🎮 SIMULATION: Pretending to upload {len(full_mission)} waypoints...")
+                logger.info(f" SIMULATION: Pretending to upload {len(full_mission)} waypoints...")
                 # Simulate upload delay
                 for i, wp in enumerate(full_mission):
                     if i % 10 == 0:  # Log every 10th waypoint
-                        logger.info(f"  📍 Simulated upload: waypoint {i+1}/{len(full_mission)}")
+                        logger.info(f"  Simulated upload: waypoint {i+1}/{len(full_mission)}")
                     time.sleep(0.01)  # Small delay to simulate upload time
                 
-                logger.info(f"✅ Simulated mission upload successful for Drone {self.drone_id}")
+                logger.info(f" Simulated mission upload successful for Drone {self.drone_id}")
                 return True
             
             # Clear existing mission
@@ -643,31 +643,31 @@ class DroneConnection:
                 return False
             
             if self.simulation:
-                logger.info(f"🎮 Simulating mission START for Drone {self.drone_id}")
+                logger.info(f" Simulating mission START for Drone {self.drone_id}")
                 with self.lock:
                     self.telemetry['flight_mode'] = 'AUTO'
                     self.mission_active = True
                     self.current_waypoint_index = 0
-                logger.info(f"✅ Simulated mission started for Drone {self.drone_id} ({len(self.mission_waypoints)} waypoints)")
+                logger.info(f" Simulated mission started for Drone {self.drone_id} ({len(self.mission_waypoints)} waypoints)")
                 return True
             
             # Step 1: Set to GUIDED mode first (required before AUTO)
             current_mode = self.telemetry.get('flight_mode', '')
             if 'GUIDED' not in current_mode.upper():
-                logger.info(f"🔧 Setting GUIDED mode before mission start...")
+                logger.info(f" Setting GUIDED mode before mission start...")
                 if not self.set_mode('GUIDED'):
                     logger.error(f"Failed to set GUIDED mode")
                     return False
                 time.sleep(1.0)  # Wait for mode change
             
             # Step 2: Set to AUTO mode to start mission
-            logger.info(f"🚁 Starting AUTO mission for Drone {self.drone_id}")
+            logger.info(f" Starting AUTO mission for Drone {self.drone_id}")
             success = self.set_mode('AUTO')
             
             if success:
                 self.mission_active = True
                 self.current_waypoint_index = 0
-                logger.info(f"✅ Mission started for Drone {self.drone_id} (TAKEOFF + {len(self.mission_waypoints)} waypoints)")
+                logger.info(f" Mission started for Drone {self.drone_id} (TAKEOFF + {len(self.mission_waypoints)} waypoints)")
                 return True
             else:
                 logger.error(f"Failed to set AUTO mode for Drone {self.drone_id}")
@@ -699,18 +699,25 @@ class DroneConnection:
             return False
     
     def stop_mission(self):
-        """Stop mission and clear waypoints"""
+        """Stop mission and RTL (Return to Launch)"""
         try:
             logger.info(f" Stopping mission for Drone {self.drone_id}")
             self.mission_active = False
-            # Switch to LOITER to stop
-            self.set_mode('LOITER')
+            
+            # Switch to RTL to return home
+            logger.info(f" Initiating RTL (Return to Launch) for Drone {self.drone_id}")
+            self.set_mode('RTL')
             time.sleep(0.5)
+            
             # Clear mission from drone
-            self.master.waypoint_clear_all_send()
+            if self.simulation:
+                logger.info(f" Simulation: Cleared mission for Drone {self.drone_id}")
+            else:
+                self.master.waypoint_clear_all_send()
+            
             self.mission_waypoints = []
             self.current_waypoint_index = 0
-            logger.info(f" Mission stopped for Drone {self.drone_id}")
+            logger.info(f" Mission stopped, drone returning to launch for Drone {self.drone_id}")
             return True
         except Exception as e:
             logger.error(f"Failed to stop mission: {e}")
