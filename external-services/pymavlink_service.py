@@ -367,6 +367,16 @@ class DroneConnection:
                 logger.info(f"✓ Drone {self.drone_id} already armed")
                 return {'success': True, 'message': 'Drone already armed'}
             
+            # Ensure drone is in STABILIZE mode before arming
+            # ArduPilot typically requires STABILIZE or GUIDED mode for arming
+            flight_mode = self.telemetry.get('flight_mode', '')
+            if flight_mode not in ['STABILIZE', 'GUIDED', 'LOITER']:
+                logger.info(f"Setting STABILIZE mode before arming (current: {flight_mode})")
+                if not self.set_mode('STABILIZE'):
+                    logger.warning(f"Failed to set STABILIZE mode, trying to arm anyway...")
+                else:
+                    time.sleep(0.5)  # Wait for mode change
+            
             # Check pre-arm conditions
             gps_fix = self.telemetry.get('gps_fix_type', 0)
             satellites = self.telemetry.get('satellites_visible', 0)
