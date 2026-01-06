@@ -1008,13 +1008,48 @@ def debug_telemetry(drone_id):
 def arm_drone(drone_id):
     """Arm a drone"""
     if drone_id not in drones or not drones[drone_id].connected:
-        return jsonify({'success': False, 'error': 'Drone not connected', 'command': 'arm'}), 404
+        return jsonify({
+            'success': False, 
+            'error': 'Drone not connected',
+            'command': 'arm',
+            'drone_id': drone_id,
+            'available_drones': list(drones.keys()),
+            'connected_drones': [d_id for d_id in drones.keys() if drones[d_id].connected]
+        }), 404
     
-    result = drones[drone_id].arm()
-    if result['success']:
-        return jsonify({'success': True, 'command': 'arm', 'message': result.get('message', 'Armed')})
-    else:
-        return jsonify({'success': False, 'command': 'arm', 'error': result.get('error', 'ARM failed')}), 400
+    try:
+        result = drones[drone_id].arm()
+        if result['success']:
+            return jsonify({
+                'success': True, 
+                'command': 'arm', 
+                'message': result.get('message', 'Armed'),
+                'armed': True,
+                'current_mode': drones[drone_id].telemetry.get('flight_mode', 'UNKNOWN')
+            })
+        else:
+            drone_telem = drones[drone_id].telemetry
+            return jsonify({
+                'success': False, 
+                'command': 'arm', 
+                'error': result.get('error', 'ARM failed'),
+                'details': result.get('details', ''),
+                'current_mode': drone_telem.get('flight_mode', 'UNKNOWN'),
+                'armed': drone_telem.get('armed', False),
+                'gps_status': drone_telem.get('gps_status', 'UNKNOWN'),
+                'battery_voltage': drone_telem.get('battery_voltage', 0),
+                'diagnostics': result.get('diagnostics', {})
+            }), 400
+    except Exception as e:
+        logger.error(f"ARM endpoint exception: {e}")
+        drone_telem = drones[drone_id].telemetry if drone_id in drones else {}
+        return jsonify({
+            'success': False,
+            'command': 'arm',
+            'error': f'ARM exception: {str(e)}',
+            'current_mode': drone_telem.get('flight_mode', 'UNKNOWN'),
+            'armed': drone_telem.get('armed', False)
+        }), 500
 
 
 @app.route('/drone/<int:drone_id>/disarm', methods=['POST'])
@@ -1101,33 +1136,103 @@ def goto(drone_id):
 def upload_mission(drone_id):
     """Upload mission waypoints to drone"""
     if drone_id not in drones or not drones[drone_id].connected:
-        return jsonify({'error': 'Drone not connected'}), 404
+        return jsonify({
+            'success': False,
+            'error': 'Drone not connected', 
+            'command': 'mission_upload',
+            'drone_id': drone_id,
+            'available_drones': list(drones.keys()),
+            'connected_drones': [d_id for d_id in drones.keys() if drones[d_id].connected]
+        }), 404
     
     data = request.json
     waypoints = data.get('waypoints', [])
     
     if not waypoints:
-        return jsonify({'error': 'No waypoints provided'}), 400
+        return jsonify({
+            'success': False,
+            'error': 'No waypoints provided',
+            'command': 'mission_upload'
+        }), 400
     
-    success = drones[drone_id].upload_mission_waypoints(waypoints)
-    return jsonify({
-        'success': success,
-        'command': 'mission_upload',
-        'waypoint_count': len(waypoints)
-    })
+    try:
+        success = drones[drone_id].upload_mission_waypoints(waypoints)
+        drone_telem = drones[drone_id].telemetry
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'command': 'mission_upload',
+                'waypoint_count': len(waypoints),
+                'message': f'Successfully uploaded {len(waypoints)} waypoints',
+                'drone_mode': drone_telem.get('flight_mode', 'UNKNOWN')
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Mission upload failed - check drone connection',
+                'command': 'mission_upload',
+                'waypoint_count': len(waypoints),
+                'drone_mode': drone_telem.get('flight_mode', 'UNKNOWN'),
+                'armed': drone_telem.get('armed', False)
+            }), 400
+    except Exception as e:
+        logger.error(f"Mission upload exception: {e}")
+        return jsonify({
+            'success': False,
+            'error': f'Mission upload exception: {str(e)}',
+            'command': 'mission_upload',
+            'waypoint_count': len(waypoints)
+        }), 500
 
 
 @app.route('/drone/<int:drone_id>/mission/start', methods=['POST'])
 def start_mission(drone_id):
     """Start the uploaded mission"""
     if drone_id not in drones or not drones[drone_id].connected:
-        return jsonify({'success': False, 'error': 'Drone not connected', 'command': 'mission_start'}), 404
+        return jsonify({
+            'success': False, 
+            'error': 'Drone not connected',
+            'command': 'mission_start',
+            'drone_id': drone_id,
+            'available_drones': list(drones.keys()),
+            'connected_drones': [d_id for d_id in drones.keys() if drones[d_id].connected]
+        }), 404
     
-    result = drones[drone_id].start_mission()
-    if result['success']:
-        return jsonify({'success': True, 'command': 'mission_start', 'message': result.get('message', 'Mission started')})
-    else:
-        return jsonify({'success': False, 'command': 'mission_start', 'error': result.get('error', 'Mission start failed')}), 400
+    try:
+        result = drones[drone_id].start_mission()
+        if result['success']:
+            drone_telem = drones[drone_id].telemetry
+            return jsonify({
+                'success': True, 
+                'command': 'mission_start', 
+                'message': result.get('message', 'Mission started'),
+                'current_mode': drone_telem.get('flight_mode', 'AUTO'),
+                'armed': drone_telem.get('armed', True)
+            })
+        else:
+            drone_telem = drones[drone_id].telemetry
+            return jsonify({
+                'success': False, 
+                'command': 'mission_start', 
+                'error': result.get('error', 'Mission start failed'),
+                'details': result.get('details', ''),
+                'current_mode': drone_telem.get('flight_mode', 'UNKNOWN'),
+                'armed': drone_telem.get('armed', False),
+                'gps_status': drone_telem.get('gps_status', 'UNKNOWN'),
+                'battery_voltage': drone_telem.get('battery_voltage', 0),
+                'diagnostics': result.get('diagnostics', {})
+            }), 400
+    except Exception as e:
+        logger.error(f"Mission start endpoint exception: {e}")
+        drone_telem = drones[drone_id].telemetry if drone_id in drones else {}
+        return jsonify({
+            'success': False,
+            'command': 'mission_start',
+            'error': f'Mission start exception: {str(e)}',
+            'current_mode': drone_telem.get('flight_mode', 'UNKNOWN'),
+            'armed': drone_telem.get('armed', False)
+        }), 500
 
 
 @app.route('/drone/<int:drone_id>/mission/pause', methods=['POST'])

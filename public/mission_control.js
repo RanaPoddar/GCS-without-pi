@@ -1420,13 +1420,16 @@ class MissionControl {
                 uploadResponse = await fetch(`http://localhost:5000/drone/${droneId}/mission/upload`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ waypoints })
+                    body: JSON.stringify({ waypoints }),
+                    timeout: 10000
                 });
             } catch (fetchError) {
                 console.error('Network error during mission upload:', fetchError);
-                const errorMsg = '❌ Cannot connect to PyMAVLink service!\n\nPlease ensure:\n1. PyMAVLink service is running on port 5000\n2. Run: python external-services/pymavlink_service.py\n3. Or use: ./start-pymavlink.sh';
+                this.addAlert('❌ PyMAVLink Service Unreachable!', 'error');
+                this.addAlert('⚠️ Check that PyMAVLink is running on port 5000', 'warning');
+                const errorMsg = '❌ Cannot connect to PyMAVLink service!\n\nPlease ensure:\n1. PyMAVLink service is running on port 5000\n2. Run: python external-services/pymavlink_service.py\n3. Or use: ./start-pymavlink.sh\n4. Wait 5 seconds for service to start\n\nError: ' + fetchError.message;
                 alert(errorMsg);
-                throw new Error(`Cannot connect to PyMAVLink service. Is it running on port 5000?`);
+                throw new Error(`Cannot connect to PyMAVLink service: ${fetchError.message}`);
             }
             
             if (!uploadResponse.ok) {
@@ -1445,15 +1448,29 @@ class MissionControl {
                 this.addAlert('❌ Failed to upload mission!', 'error');
                 this.addAlert(`⚠️ ${errorDetails}`, 'warning');
                 
-                const errorMsg = `❌ Failed to upload mission!\n\n${errorDetails}\n\nCheck System Messages console for details.`;
+                const errorMsg = `❌ Failed to upload mission to PyMAVLink!\n\nStatus: ${uploadResponse.status}\nError: ${errorDetails}\n\nPossible issues:\n• PyMAVLink crashed or crashed during operation\n• Drone connection lost\n• Invalid waypoint data\n\nCheck terminal for PyMAVLink service logs.`;
                 alert(errorMsg);
                 throw new Error(`Failed to upload mission: ${errorDetails}`);
             }
             
-            const uploadResult = await uploadResponse.json();
+            let uploadResult;
+            try {
+                uploadResult = await uploadResponse.json();
+            } catch (jsonError) {
+                console.error('Failed to parse upload response:', jsonError);
+                this.addAlert('❌ Invalid response from PyMAVLink!', 'error');
+                const errorMsg = '❌ PyMAVLink returned invalid response!\n\nThe service may have crashed or returned corrupted data.\n\nCheck terminal for error logs.';
+                alert(errorMsg);
+                throw new Error(`Invalid response from PyMAVLink: ${jsonError.message}`);
+            }
+            
             console.log('Upload result:', uploadResult);
             if (!uploadResult.success) {
-                throw new Error('Mission upload returned failure');
+                this.addAlert('❌ PyMAVLink reported upload failure!', 'error');
+                this.addAlert(`⚠️ ${uploadResult.error || 'Unknown error'}`, 'warning');
+                const errorMsg = `❌ Mission upload rejected by PyMAVLink!\n\nError: ${uploadResult.error || 'Unknown error'}\n\nCheck terminal for service logs.`;
+                alert(errorMsg);
+                throw new Error(`Upload failed: ${uploadResult.error || 'Unknown error'}`);
             }
             
             // Note: PyMAVLink automatically adds NAV and TAKEOFF waypoints
@@ -1465,17 +1482,40 @@ class MissionControl {
             let armResponse;
             try {
                 armResponse = await fetch(`http://localhost:5000/drone/${droneId}/arm`, {
-                    method: 'POST'
+                    method: 'POST',
+                    timeout: 10000
                 });
             } catch (fetchError) {
                 console.error('Network error during ARM:', fetchError);
-                this.addAlert('❌ Cannot connect to PyMAVLink service for ARM command!', 'error');
-                const errorMsg = '❌ Cannot connect to PyMAVLink service!\n\nPlease ensure PyMAVLink service is running on port 5000.';
+                this.addAlert('❌ PyMAVLink Service Unreachable!', 'error');
+                this.addAlert('⚠️ Cannot connect for ARM command!', 'warning');
+                const errorMsg = `❌ Cannot connect to PyMAVLink service for ARM!\n\nError: ${fetchError.message}\n\nMake sure PyMAVLink service is still running on port 5000.`;
                 alert(errorMsg);
                 return;
             }
             
-            const armResult = await armResponse.json();
+            if (!armResponse.ok) {
+                console.error('ARM endpoint error:', armResponse.status);
+                this.addAlert(`❌ PyMAVLink returned error ${armResponse.status}!`, 'error');
+                try {
+                    const errorData = await armResponse.json();
+                    this.addAlert(`⚠️ ${errorData.error || 'Unknown error'}`, 'warning');
+                } catch (e) {}
+                const errorMsg = `❌ ARM endpoint returned error ${armResponse.status}\n\nService may have crashed or disconnected from drone.`;
+                alert(errorMsg);
+                return;
+            }
+            
+            let armResult;
+            try {
+                armResult = await armResponse.json();
+            } catch (jsonError) {
+                console.error('Failed to parse ARM response:', jsonError);
+                this.addAlert('❌ Invalid response from PyMAVLink ARM!', 'error');
+                const errorMsg = '❌ PyMAVLink returned invalid response for ARM!\n\nThe service may have crashed.';
+                alert(errorMsg);
+                return;
+            }
             
             if (armResult.success) {
                 this.addAlert('✅ Drone armed successfully', 'success');
@@ -1493,7 +1533,7 @@ class MissionControl {
                 console.error('Full response:', armResult);
                 
                 // Show detailed alert
-                const errorMsg = `❌ Failed to ARM drone!\n\n${errorDetails}\n\nCommon issues:\n• GPS: Need 3D fix with 8+ satellites\n• Battery: Check voltage is sufficient\n• Compass: Ensure proper calibration\n• Safety: Check all safety switches\n• RC: Verify RC connection if required\n\nCheck System Messages console for details.`;
+                const errorMsg = `❌ Failed to ARM drone!\n\n${errorDetails}\n\nCommon issues:\n• GPS: Need 3D fix with 8+ satellites\n• Battery: Check voltage is sufficient\n• Compass: Ensure proper calibration\n• Safety: Check all safety switches\n• RC: Verify RC connection if required\n\nDrone Status:\n• Mode: ${armResult.current_mode || 'unknown'}\n• Armed: ${armResult.armed !== undefined ? armResult.armed : 'unknown'}\n• GPS: ${armResult.gps_status || 'unknown'}\n\nCheck System Messages for details.`;
                 alert(errorMsg);
                 return;
             }
@@ -1505,17 +1545,40 @@ class MissionControl {
             let startResponse;
             try {
                 startResponse = await fetch(`http://localhost:5000/drone/${droneId}/mission/start`, {
-                    method: 'POST'
+                    method: 'POST',
+                    timeout: 10000
                 });
             } catch (fetchError) {
                 console.error('Network error during mission start:', fetchError);
-                this.addAlert('❌ Cannot connect to PyMAVLink service for mission start!', 'error');
-                const errorMsg = '❌ Cannot connect to PyMAVLink service!\n\nPlease ensure PyMAVLink service is running on port 5000.';
+                this.addAlert('❌ PyMAVLink Service Unreachable!', 'error');
+                this.addAlert('⚠️ Cannot connect for mission start!', 'warning');
+                const errorMsg = `❌ Cannot connect to PyMAVLink service for mission start!\n\nError: ${fetchError.message}\n\nMake sure PyMAVLink service is still running on port 5000.`;
                 alert(errorMsg);
                 return;
             }
             
-            const startResult = await startResponse.json();
+            if (!startResponse.ok) {
+                console.error('Mission start endpoint error:', startResponse.status);
+                this.addAlert(`❌ PyMAVLink returned error ${startResponse.status}!`, 'error');
+                try {
+                    const errorData = await startResponse.json();
+                    this.addAlert(`⚠️ ${errorData.error || 'Unknown error'}`, 'warning');
+                } catch (e) {}
+                const errorMsg = `❌ Mission start endpoint returned error ${startResponse.status}\n\nService may have crashed or lost drone connection.`;
+                alert(errorMsg);
+                return;
+            }
+            
+            let startResult;
+            try {
+                startResult = await startResponse.json();
+            } catch (jsonError) {
+                console.error('Failed to parse mission start response:', jsonError);
+                this.addAlert('❌ Invalid response from PyMAVLink!', 'error');
+                const errorMsg = '❌ PyMAVLink returned invalid response for mission start!\n\nThe service may have crashed.';
+                alert(errorMsg);
+                return;
+            }
             
             if (!startResult.success) {
                 const errorDetails = startResult.error || 'Unknown mission start failure';
@@ -1526,13 +1589,13 @@ class MissionControl {
                 console.error('Mission start failed:', errorDetails);
                 console.error('Full response:', startResult);
                 
-                const errorMsg = `❌ Failed to start mission!\n\n${errorDetails}\n\nCheck System Messages console for details.`;
+                const errorMsg = `❌ Failed to start mission!\n\n${errorDetails}\n\nPossible issues:\n• Drone lost GPS lock\n• Battery voltage dropped\n• Drone disconnected\n• Flight mode change failed\n\nDrone Status:\n• Mode: ${startResult.current_mode || 'unknown'}\n• Armed: ${startResult.armed !== undefined ? startResult.armed : 'unknown'}\n• GPS: ${startResult.gps_status || 'unknown'}\n\nCheck System Messages for details.`;
                 alert(errorMsg);
                 return;
             }
             
-            this.addAlert(' Mission ACTIVE! Drone executing waypoints...', 'success');
-            alert('✅ Mission Started Successfully!\n\nThe drone will now:\n1. Takeoff to altitude\n2. Execute waypoints\n3. Complete survey mission\n\nMonitor progress on the dashboard.');
+            this.addAlert('🚀 Mission ACTIVE! Drone executing waypoints...', 'success');
+            alert('✅ Mission Started Successfully!\n\nThe drone will now:\n1. Takeoff to survey altitude\n2. Execute survey grid\n3. Return to start point\n\nMonitor real-time position on the dashboard.');
             this.updateMissionStatus('active');
             
             // Enable control buttons
@@ -1558,17 +1621,23 @@ class MissionControl {
             
         } catch (error) {
             console.error('❌ Automated mission error:', error);
-            this.addAlert(`❌ Mission start failed: ${error.message}`, 'error');
+            console.error('Error stack:', error.stack);
+            this.addAlert(`❌ Mission sequence failed: ${error.message}`, 'error');
             
-            // Show alert popup for errors that might not have been caught earlier
-            if (!error.message.includes('PyMAVLink') && !error.message.includes('upload') && !error.message.includes('ARM')) {
-                alert(`❌ Mission Error!\n\n${error.message}`);
+            // Show alert popup for unexpected errors
+            if (!document.querySelector('.alert-container [data-message*="PyMAVLink"]')) {
+                const fullErrorMsg = `❌ Mission Start Failed!\n\nError: ${error.message}\n\nThis may be due to:\n• PyMAVLink service crash\n• Drone disconnection\n• Network connectivity issue\n• Invalid mission parameters\n\nCheck System Messages console for full error details.\n\nTerminal log:\n${error.stack || error.message}`;
+                alert(fullErrorMsg);
             }
             
             // Re-enable start button on error
-            document.getElementById('startMission').disabled = false;
-            document.getElementById('pauseMission').disabled = true;
-            document.getElementById('stopMission').disabled = true;
+            try {
+                document.getElementById('startMission').disabled = false;
+                document.getElementById('pauseMission').disabled = true;
+                document.getElementById('stopMission').disabled = true;
+            } catch (domError) {
+                console.error('Error enabling buttons:', domError);
+            }
             
             // Stop mission timer if it was started
             if (this.missionInterval) {
