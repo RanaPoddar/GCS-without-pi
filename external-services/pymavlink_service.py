@@ -625,25 +625,26 @@ class DroneConnection:
             first_lon = waypoints[0].get('longitude', waypoints[0].get('lon', 0))
             takeoff_alt = waypoints[0].get('altitude', waypoints[0].get('alt', 15))
             
-            # Waypoint 0: Navigate to start point at low altitude (5m)
-            # This ensures drone flies horizontally to mission start before takeoff
-            nav_to_start = {
-                'latitude': first_lat,
-                'longitude': first_lon,
-                'altitude': 5,  # Low altitude during horizontal transit
-                'command': mavutil.mavlink.MAV_CMD_NAV_WAYPOINT
-            }
-            
-            # Waypoint 1: Takeoff at start point to mission altitude
+            # Waypoint 0: TAKEOFF at CURRENT location (lat=0, lon=0 means current position)
+            # This allows drone to takeoff safely wherever it's placed
             takeoff_waypoint = {
-                'latitude': first_lat,
-                'longitude': first_lon,
+                'latitude': 0,  # 0 = takeoff at current location
+                'longitude': 0,  # 0 = takeoff at current location
                 'altitude': takeoff_alt,
                 'command': mavutil.mavlink.MAV_CMD_NAV_TAKEOFF
             }
             
-            # Prepend navigation and takeoff to mission
-            full_mission = [nav_to_start, takeoff_waypoint] + waypoints
+            # Waypoint 1: Navigate to first survey point at mission altitude
+            # This ensures drone reaches mission start point before beginning survey
+            nav_to_mission_start = {
+                'latitude': first_lat,
+                'longitude': first_lon,
+                'altitude': takeoff_alt,
+                'command': mavutil.mavlink.MAV_CMD_NAV_WAYPOINT
+            }
+            
+            # Build mission: TAKEOFF (current location) → Navigate to start → Survey grid
+            full_mission = [takeoff_waypoint, nav_to_mission_start] + waypoints
             
             logger.info(f" Uploading {len(full_mission)} waypoints (including TAKEOFF) to Drone {self.drone_id}")
             
@@ -806,6 +807,15 @@ class DroneConnection:
             # Final verification
             final_mode = self.telemetry.get('flight_mode', '')
             if 'AUTO' in final_mode.upper():
+                # Set mission to start from waypoint 0 (the TAKEOFF command)
+                logger.info(f" Setting mission to start from waypoint 0...")
+                self.master.mav.mission_set_current_send(
+                    self.master.target_system,
+                    self.master.target_component,
+                    0  # Start from waypoint 0 (TAKEOFF)
+                )
+                time.sleep(0.5)  # Brief delay for command to process
+                
                 self.mission_active = True
                 self.current_waypoint_index = 0
                 logger.info(f" ✅ Mission STARTED for Drone {self.drone_id} in {final_mode} mode ({len(self.mission_waypoints)} waypoints)")
