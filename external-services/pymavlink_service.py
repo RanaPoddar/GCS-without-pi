@@ -64,7 +64,8 @@ class DroneConnection:
             'satellites_visible': 0,
             'gps_fix_type': 0,
             'hdop': 99.99,
-            'timestamp': time.time()
+            'timestamp': time.time(),
+            'statustext_log': []  # Last STATUSTEXT messages from autopilot
         }
         self.lock = threading.Lock()
         self.running = False
@@ -72,6 +73,8 @@ class DroneConnection:
         self.mission_waypoints = []
         self.current_waypoint_index = 0
         self.mission_active = False
+        self.statustext_log = []  # Store last 20 STATUSTEXT messages for debugging
+        self.statustext_max = 20
         
     def connect(self):
         """Establish connection to Pixhawk (or simulation)"""
@@ -253,6 +256,21 @@ class DroneConnection:
                         # Also get altitude from VFR_HUD as backup
                         if 'relative_altitude' not in self.telemetry or self.telemetry['relative_altitude'] == 0:
                             self.telemetry['relative_altitude'] = msg.alt if hasattr(msg, 'alt') else 0.0
+                    
+                    elif msg_type == 'STATUSTEXT':
+                        # Capture status messages for debugging (pre-arm failures, etc.)
+                        severity = getattr(msg, 'severity', 0)
+                        text = getattr(msg, 'text', '')
+                        timestamp = time.time()
+                        status_entry = {'severity': severity, 'text': text, 'timestamp': timestamp}
+                        self.statustext_log.append(status_entry)
+                        # Keep only last N messages
+                        if len(self.statustext_log) > self.statustext_max:
+                            self.statustext_log.pop(0)
+                        self.telemetry['statustext_log'] = self.statustext_log.copy()
+                        # Log notable messages (severity < 4 is warning+)
+                        if severity < 4:
+                            logger.info(f"[{severity}] Drone {self.drone_id} STATUSTEXT: {text}")
                         
                     self.telemetry['timestamp'] = time.time()
                     
@@ -417,7 +435,7 @@ class DroneConnection:
                     logger.warning(f"  Arm verification attempt {attempt + 1} failed for Drone {self.drone_id}, retrying...")
                     time.sleep(0.5)
             
-            # If failed after retries, build detailed error message
+            # If failed after retries, build detailed error message with STATUSTEXT logs
             error_details = []
             error_details.append(f"GPS: {gps_fix} fix, {satellites} satellites")
             error_details.append(f"Battery: {battery_voltage:.1f}V")
@@ -427,11 +445,20 @@ class DroneConnection:
             if warnings:
                 error_msg += ". Issues: " + "; ".join(warnings)
             
+            # Include recent STATUSTEXT messages for autopilot-specific failure reasons
+            recent_statustext = self.statustext_log[-5:] if self.statustext_log else []
+            if recent_statustext:
+                statustext_msgs = [entry['text'] for entry in recent_statustext]
+                error_msg += ". Autopilot: " + "; ".join(statustext_msgs)
+            
             logger.error(f" Failed to ARM Drone {self.drone_id}")
             logger.error(f"   GPS: {gps_fix} fix, {satellites} satellites")
             logger.error(f"   Battery: {battery_voltage:.1f}V")
             logger.error(f"   Mode: {flight_mode}")
             logger.error(f"   Common causes: Bad GPS, low battery, wrong mode, safety switch, compass cal")
+            if recent_statustext:
+                for entry in recent_statustext:
+                    logger.error(f"   STATUSTEXT [{entry['severity']}]: {entry['text']}")
             
             return {'success': False, 'error': error_msg}
         except Exception as e:
@@ -456,7 +483,7 @@ class DroneConnection:
         return {'success': False, 'error': 'Disarm failed after 3 attempts'}
     
     def set_mode(self, mode_name):
-        """Set flight mode with confirmation (or simulate)"""
+        """Set flight mode with HEARTBEAT verification (or simulate)"""
         try:
             if self.simulation:
                 logger.info(f" Simulating mode change to {mode_name} for Drone {self.drone_id}")
@@ -471,24 +498,67 @@ class DroneConnection:
                 return False
             
             mode_id = self.master.mode_mapping()[mode_name.upper()]
+            logger.info(f"Setting mode {mode_name} (ID={mode_id}) for Drone {self.drone_id}")
             
-            # Try to set mode with retries
+            # Use command_long_send for proper MAV_CMD_DO_SET_MODE with ACK
             for attempt in range(3):
-                self.master.set_mode(mode_id)
-                time.sleep(0.3)
+                # Send DO_SET_MODE command (MAV_CMD_DO_SET_MODE = 176)
+                self.master.mav.command_long_send(
+                    self.master.target_system,
+                    self.master.target_component,
+                    mavutil.mavlink.MAV_CMD_DO_SET_MODE,
+                    0,  # confirmation
+                    1,  # mode parameter 1 (1 = custom mode)
+                    mode_id,  # mode parameter 2 (the mode ID)
+                    0, 0, 0, 0, 0  # unused params
+                )
                 
-                # Verify mode was set (check telemetry)
-                current_mode = self.telemetry.get('flight_mode', '')
-                if mode_name.upper() in current_mode.upper():
-                    logger.info(f"Drone {self.drone_id} mode confirmed: {mode_name}")
-                    return True
+                # Wait for COMMAND_ACK
+                ack_received = False
+                for i in range(10):  # Wait up to 2 seconds (10 x 0.2s timeout)
+                    msg = self.master.recv_match(type='COMMAND_ACK', timeout=0.2)
+                    if msg and msg.command == mavutil.mavlink.MAV_CMD_DO_SET_MODE:
+                        ack_received = True
+                        if msg.result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
+                            logger.info(f"✅ COMMAND_ACK received for {mode_name}")
+                            # Now verify by reading HEARTBEAT messages directly
+                            # (don't rely on telemetry loop which may be delayed)
+                            mode_verified = False
+                            for j in range(15):  # Try up to 3 seconds
+                                hb = self.master.recv_match(type='HEARTBEAT', timeout=0.2)
+                                if hb:
+                                    current_mode = mavutil.mode_string_v10(hb)
+                                    if mode_name.upper() in current_mode.upper():
+                                        logger.info(f"✅ Mode VERIFIED: {mode_name} (via HEARTBEAT)")
+                                        mode_verified = True
+                                        break
+                                time.sleep(0.1)
+                            
+                            if mode_verified:
+                                return True
+                            else:
+                                logger.warning(f"Mode ACK received but HEARTBEAT not updated yet (attempt {attempt + 1}/3)")
+                                break  # Retry with next attempt
+                        else:
+                            # result=4 (FAILED) typically means drone is ALREADY in that mode
+                            logger.warning(f"Mode command rejected (result={msg.result}) for Drone {self.drone_id}")
+                            
+                            # SPECIAL CASE: For AUTO mode, result=4 almost always means "already in AUTO"
+                            # This happens after mission upload when drone auto-enters AUTO mode
+                            # Treating result=4 for AUTO as SUCCESS
+                            if mode_name.upper() == 'AUTO' and msg.result == 4:
+                                logger.info(f"✅ AUTO mode rejected with result=4 → Drone is already in AUTO mode (mission active)")
+                                return True
+                            
+                            break  # Exit loop, will retry for other modes
+                    time.sleep(0.1)
                 
-                if attempt < 2:
-                    logger.warning(f"Mode set attempt {attempt + 1} for {mode_name}, retrying...")
+                if not ack_received and attempt < 2:
+                    logger.warning(f"No COMMAND_ACK for mode {mode_name} (attempt {attempt + 1}/3), retrying...")
                     time.sleep(0.5)
             
-            logger.info(f"Mode command sent for {mode_name} (confirmation pending)")
-            return True
+            logger.error(f"Failed to set mode {mode_name} after 3 attempts for Drone {self.drone_id}")
+            return False
         except Exception as e:
             logger.error(f"Failed to set mode for Drone {self.drone_id}: {e}")
             return False
@@ -741,32 +811,42 @@ class DroneConnection:
             
             self.mission_waypoints = waypoints
             
-            # Get first survey point coordinates
+            # Get first survey point coordinates and altitude
             first_lat = waypoints[0].get('latitude', waypoints[0].get('lat', 0))
             first_lon = waypoints[0].get('longitude', waypoints[0].get('lon', 0))
-            takeoff_alt = waypoints[0].get('altitude', waypoints[0].get('alt', 15))
+            survey_alt = waypoints[0].get('altitude', waypoints[0].get('alt', 30))
             
-            # Waypoint 0: Navigate to start point at low altitude (5m)
-            # This ensures drone flies horizontally to mission start before takeoff
-            nav_to_start = {
-                'latitude': first_lat,
-                'longitude': first_lon,
-                'altitude': 5,  # Low altitude during horizontal transit
-                'command': mavutil.mavlink.MAV_CMD_NAV_WAYPOINT
-            }
+            # Get current drone position (will be used as takeoff point)
+            current_lat = self.telemetry.get('latitude', first_lat)
+            current_lon = self.telemetry.get('longitude', first_lon)
             
-            # Waypoint 1: Takeoff at start point to mission altitude
+            logger.info(f"Mission sequence:")
+            logger.info(f"  1. Takeoff at current position ({current_lat:.6f}, {current_lon:.6f}) to {survey_alt}m")
+            logger.info(f"  2. Navigate to first survey waypoint ({first_lat:.6f}, {first_lon:.6f})")
+            logger.info(f"  3. Execute {len(waypoints)} survey waypoints")
+            
+            # Waypoint 0: Takeoff at current position to mission altitude
+            # (drone stays at current location, just climbs to altitude)
             takeoff_waypoint = {
-                'latitude': first_lat,
-                'longitude': first_lon,
-                'altitude': takeoff_alt,
+                'latitude': current_lat,
+                'longitude': current_lon,
+                'altitude': survey_alt,
                 'command': mavutil.mavlink.MAV_CMD_NAV_TAKEOFF
             }
             
-            # Prepend navigation and takeoff to mission
-            full_mission = [nav_to_start, takeoff_waypoint] + waypoints
+            # Waypoint 1: Navigate to first survey point at mission altitude
+            # (fly from takeoff location to first survey waypoint)
+            nav_to_survey = {
+                'latitude': first_lat,
+                'longitude': first_lon,
+                'altitude': survey_alt,
+                'command': mavutil.mavlink.MAV_CMD_NAV_WAYPOINT
+            }
             
-            logger.info(f" Uploading {len(full_mission)} waypoints (including TAKEOFF) to Drone {self.drone_id}")
+            # Prepend takeoff and navigation waypoints to mission
+            full_mission = [takeoff_waypoint, nav_to_survey] + waypoints
+            
+            logger.info(f" Uploading {len(full_mission)} waypoints (TAKEOFF + NAV + {len(waypoints)} survey) to Drone {self.drone_id}")
             
             if self.simulation:
                 logger.info(f" SIMULATION: Pretending to upload {len(full_mission)} waypoints...")
@@ -902,28 +982,89 @@ class DroneConnection:
                 logger.info(f" Simulated mission started for Drone {self.drone_id} ({len(self.mission_waypoints)} waypoints)")
                 return {'success': True, 'message': f'Mission started (simulated) - {len(self.mission_waypoints)} waypoints'}
             
-            # Step 1: Set to GUIDED mode first (required before AUTO)
-            current_mode = self.telemetry.get('flight_mode', '')
-            if 'GUIDED' not in current_mode.upper():
-                logger.info(f" Setting GUIDED mode before mission start...")
-                mode_result = self.set_mode('GUIDED')
-                if not mode_result:
-                    logger.error(f"Failed to set GUIDED mode")
-                    return {'success': False, 'error': f'Failed to set GUIDED mode. Current mode: {current_mode}'}
-                time.sleep(1.0)  # Wait for mode change
+            current_mode = self.telemetry.get('flight_mode', '').upper()
+            logger.info(f" Current mode: {current_mode}")
             
-            # Step 2: Set to AUTO mode to start mission
-            logger.info(f" Starting AUTO mission for Drone {self.drone_id}")
+            # Transition through GUIDED mode first if not already there
+            # ArduCopter safety: can't go directly from STABILIZE to AUTO
+            if 'GUIDED' not in current_mode:
+                logger.info(f" Transitioning to GUIDED mode (prerequisite for AUTO)...")
+                guided_success = self.set_mode('GUIDED')
+                if not guided_success:
+                    logger.error(f"Failed to transition to GUIDED mode for Drone {self.drone_id}")
+                    return {'success': False, 'error': 'Failed to set GUIDED mode. Check drone status.'}
+                time.sleep(0.5)
+            
+            # Try to set AUTO mode
+            logger.info(f" Setting AUTO mode to start mission for Drone {self.drone_id}...")
             success = self.set_mode('AUTO')
             
-            if success:
-                self.mission_active = True
-                self.current_waypoint_index = 0
-                logger.info(f" Mission started for Drone {self.drone_id} (TAKEOFF + {len(self.mission_waypoints)} waypoints)")
-                return {'success': True, 'message': f'Mission started - {len(self.mission_waypoints)} waypoints'}
-            else:
-                logger.error(f"Failed to set AUTO mode for Drone {self.drone_id}")
-                return {'success': False, 'error': f'Failed to set AUTO mode. Current mode: {self.telemetry.get("flight_mode", "UNKNOWN")}'}
+            if not success:
+                logger.warning(f"⚠️ set_mode('AUTO') returned False, attempting MAV_CMD_MISSION_START...")
+                # Fallback: Use MAV_CMD_MISSION_START command directly
+                self.master.mav.command_long_send(
+                    self.master.target_system,
+                    self.master.target_component,
+                    mavutil.mavlink.MAV_CMD_MISSION_START,
+                    0,  # confirmation
+                    0, 0, 0, 0, 0, 0, 0  # params
+                )
+                time.sleep(0.5)
+            
+            # CRITICAL: Verify AUTO mode is actually set via HEARTBEAT (not telemetry)
+            logger.info(f" Verifying AUTO mode activation via HEARTBEAT...")
+            mode_confirmed = False
+            for i in range(10):  # Try 10 times over 2 seconds
+                msg = self.master.recv_match(type='HEARTBEAT', timeout=0.2)
+                if msg:
+                    actual_mode = mavutil.mode_string_v10(msg)
+                    logger.info(f"  HEARTBEAT #{i+1}: mode = {actual_mode}")
+                    if 'AUTO' in actual_mode.upper():
+                        mode_confirmed = True
+                        logger.info(f"✅ AUTO mode CONFIRMED via HEARTBEAT")
+                        break
+                time.sleep(0.1)
+            
+            if not mode_confirmed:
+                logger.error(f"❌ AUTO mode NOT confirmed via HEARTBEAT after 10 attempts")
+                logger.error(f"   Drone may still be in GUIDED or other mode")
+                logger.error(f"   Try: 1) Check GCS safety settings, 2) Ensure mission fully uploaded, 3) Manually switch to AUTO")
+                return {'success': False, 'error': 'Could not verify AUTO mode after multiple attempts. Drone may have rejected mode change.'}
+            
+            # Request MISSION_CURRENT to verify mission execution
+            logger.info(f" Requesting MISSION_CURRENT to verify mission execution...")
+            self.master.mav.mission_request_int_send(
+                self.master.target_system,
+                self.master.target_component,
+                0  # Request current waypoint
+            )
+            
+            mission_confirmed = False
+            for i in range(5):
+                msg = self.master.recv_match(type='MISSION_CURRENT', timeout=0.5)
+                if msg:
+                    current_wp = msg.seq
+                    logger.info(f"✅ MISSION_CURRENT: Drone executing waypoint {current_wp}")
+                    self.current_waypoint_index = current_wp
+                    mission_confirmed = True
+                    break
+                time.sleep(0.1)
+            
+            if not mission_confirmed:
+                logger.warning(f"⚠️ Could not confirm MISSION_CURRENT")
+            
+            # Mark mission as active only if AUTO mode confirmed
+            self.mission_active = True
+            logger.info(f"✅ Mission STARTED for Drone {self.drone_id} (waypoint {self.current_waypoint_index})")
+            
+            # Give drone time to start executing
+            time.sleep(1.0)
+            
+            # Check if drone is actually flying (altitude increasing)
+            initial_alt = self.telemetry.get('relative_altitude', 0)
+            logger.info(f" Initial altitude: {initial_alt:.1f}m")
+            
+            return {'success': True, 'message': f'Mission started - {len(self.mission_waypoints)} waypoints', 'current_waypoint': self.current_waypoint_index}
                 
         except Exception as e:
             logger.error(f"Failed to start mission for Drone {self.drone_id}: {e}")
@@ -988,18 +1129,30 @@ class DroneConnection:
             msg = self.master.recv_match(type='MISSION_CURRENT', blocking=True, timeout=1.0)
             if msg:
                 self.current_waypoint_index = msg.seq
+                logger.info(f"MISSION_CURRENT: {msg.seq}, Total: {len(self.mission_waypoints)}")
             
             total = len(self.mission_waypoints)
             current = self.current_waypoint_index
             progress = (current / total * 100) if total > 0 else 0
             
-            return {
+            # Get current telemetry
+            current_alt = self.telemetry.get('relative_altitude', 0)
+            current_mode = self.telemetry.get('flight_mode', 'UNKNOWN')
+            is_armed = self.telemetry.get('armed', False)
+            
+            status = {
                 'active': self.mission_active,
                 'total_waypoints': total,
                 'current_waypoint': current,
                 'progress_percent': progress,
-                'waypoints_remaining': total - current
+                'waypoints_remaining': total - current,
+                'flight_mode': current_mode,
+                'armed': is_armed,
+                'altitude': current_alt
             }
+            
+            logger.info(f"Mission Status - Active: {self.mission_active}, WP: {current}/{total}, Mode: {current_mode}, Alt: {current_alt:.1f}m")
+            return status
         except Exception as e:
             logger.error(f"Failed to get mission status: {e}")
             return {
@@ -1007,7 +1160,8 @@ class DroneConnection:
                 'total_waypoints': len(self.mission_waypoints),
                 'current_waypoint': self.current_waypoint_index,
                 'progress_percent': 0,
-                'waypoints_remaining': 0
+                'waypoints_remaining': 0,
+                'error': str(e)
             }
     
     def get_telemetry(self):
