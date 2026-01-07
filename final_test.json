@@ -1,0 +1,64 @@
+{
+  "version": "1.0",
+  "mission_name": "KML_Survey_Mission",
+  "created": "auto-generated",
+  "frame_type": "MAV_FRAME_GLOBAL_RELATIVE_ALT",
+  "home_position": {
+    "latitude": 23.292139731038745,
+    "longitude": 85.31060329912705,
+    "altitude": 0
+  },
+  "mission_params": {
+    "altitude_m": 15.0,
+    "speed_ms": 2.0,
+    "swath_width_m": 5.92314433094942,
+    "lateral_overlap": 0.7,
+    "field_length_m": 10.929886268893059,
+    "field_width_m": 10.362788662088958,
+    "num_passes": 2,
+    "estimated_time_min": 0.19862011602337168
+  },
+  "waypoints": [
+    {
+      "id": 1,
+      "seq": 0,
+      "latitude": 23.292117242874713,
+      "longitude": 85.31055372014305,
+      "altitude": 15.0,
+      "speed": 2.0,
+      "command": "NAV_WAYPOINT",
+      "frame": "MAV_FRAME_GLOBAL_RELATIVE_ALT"
+    },
+    {
+      "id": 2,
+      "seq": 1,
+      "latitude": 23.292117242874713,
+      "longitude": 85.3106336118224,
+      "altitude": 15.0,
+      "speed": 2.0,
+      "command": "NAV_WAYPOINT",
+      "frame": "MAV_FRAME_GLOBAL_RELATIVE_ALT"
+    },
+    {
+      "id": 3,
+      "seq": 2,
+      "latitude": 23.292170451385537,
+      "longitude": 85.3106332047111,
+      "altitude": 15.0,
+      "speed": 2.0,
+      "command": "NAV_WAYPOINT",
+      "frame": "MAV_FRAME_GLOBAL_RELATIVE_ALT"
+    },
+    {
+      "id": 4,
+      "seq": 3,
+      "latitude": 23.292170451385537,
+      "longitude": 85.31058249078858,
+      "altitude": 15.0,
+      "speed": 2.0,
+      "command": "NAV_WAYPOINT",
+      "frame": "MAV_FRAME_GLOBAL_RELATIVE_ALT"
+    }
+  ],
+  "rtl_altitude": 25.0
+}

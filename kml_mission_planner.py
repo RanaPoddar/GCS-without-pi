@@ -231,8 +231,60 @@ class KMLMissionPlanner:
             'mission_time_min': mission_time_min * 1.15
         }
     
+    def create_waypoints_file(self, waypoints, metadata, output_file='mission.waypoints'):
+        """Create Mission Planner .waypoints file for comparison
+        
+        Format: QGC WPL 110
+        seq\tcurrent\tframe\tcommand\tparam1\tparam2\tparam3\tparam4\tlat\tlon\talt\tautocontinue
+        """
+        with open(output_file, 'w') as f:
+            # Header
+            f.write("QGC WPL 110\n")
+            
+            # Line 0: HOME waypoint (current=1, frame=0, command=16)
+            # Use first survey waypoint's position as HOME location
+            # Altitude will be set by drone when armed (AMSL)
+            if waypoints:
+                home_lat = waypoints[0]['latitude']
+                home_lon = waypoints[0]['longitude']
+            else:
+                home_lat = metadata['center_lat']
+                home_lon = metadata['center_lon']
+            home_alt = 0.0  # Will be set by drone at arming time (AMSL)
+            f.write(f"0\t1\t0\t16\t0\t0\t0\t0\t{home_lat:.8f}\t{home_lon:.8f}\t{home_alt:.6f}\t1\n")
+            
+            # Line 1: TAKEOFF (current=0, frame=3, command=22, use HOME coordinates)
+            # ArduCopter requires actual coordinates for TAKEOFF in AUTO mode, not 0.0
+            f.write(f"1\t0\t3\t22\t0.00000000\t0.00000000\t0.00000000\t0.00000000\t{home_lat:.8f}\t{home_lon:.8f}\t{self.altitude_m:.6f}\t1\n")
+            
+            # Line 2: DO_CHANGE_SPEED (optional, command=178)
+            # param1=1 (groundspeed), param2=speed in m/s
+            f.write(f"2\t0\t3\t178\t1.00000000\t{self.speed_ms:.8f}\t0.00000000\t0.00000000\t0.00000000\t0.00000000\t0.000000\t1\n")
+            
+            # Lines 3+: Survey waypoints (frame=3, command=16)
+            for idx, wp in enumerate(waypoints, start=3):
+                lat = wp['latitude']
+                lon = wp['longitude']
+                alt = wp['altitude']
+                # All survey waypoints: current=0, frame=3, command=16, params=0
+                f.write(f"{idx}\t0\t3\t16\t0.00000000\t0.00000000\t0.00000000\t0.00000000\t{lat:.8f}\t{lon:.8f}\t{alt:.6f}\t1\n")
+            
+            # Last line: RTL (command=20)
+            rtl_seq = 3 + len(waypoints)
+            f.write(f"{rtl_seq}\t0\t3\t20\t0.00000000\t0.00000000\t0.00000000\t0.00000000\t0.00000000\t0.00000000\t0.000000\t1\n")
+        
+        total_lines = 3 + len(waypoints) + 1  # HOME + TAKEOFF + SPEED + waypoints + RTL
+        print(f"\n[OK] Mission Planner .waypoints file created: {output_file}")
+        print(f"   Format: QGC WPL 110 (Mission Planner compatible)")
+        print(f"   Total mission items: {total_lines} (HOME + TAKEOFF + SPEED + {len(waypoints)} waypoints + RTL)")
+        return output_file
+    
     def create_mission_file(self, waypoints, metadata, output_file='mission.json'):
-        """Create mission JSON file for upload"""
+        """Create mission JSON file for upload
+        
+        NOTE: Only includes survey waypoints for map display.
+        Backend (pymavlink_service.py) will add HOME, TAKEOFF, and RTL during upload.
+        """
         mission = {
             "version": "1.0",
             "mission_name": "KML_Survey_Mission",
@@ -253,7 +305,7 @@ class KMLMissionPlanner:
                 "num_passes": metadata['num_passes'],
                 "estimated_time_min": metadata['mission_time_min']
             },
-            "waypoints": waypoints,
+            "waypoints": waypoints,  # Only survey waypoints (backend adds HOME/TAKEOFF/RTL)
             "rtl_altitude": self.altitude_m + 10
         }
         
@@ -298,10 +350,16 @@ def main():
         # Generate waypoints
         waypoints, metadata = planner.generate_survey_waypoints(boundary)
         
-        # Create mission file
+        # Create mission JSON file
         planner.create_mission_file(waypoints, metadata, args.output)
         
-        print(f"\n[OK] Ready to fly! Upload {args.output} to dashboard")
+        # Create Mission Planner .waypoints file for comparison
+        waypoints_file = args.output.replace('.json', '.waypoints')
+        planner.create_waypoints_file(waypoints, metadata, waypoints_file)
+        
+        print(f"\n[OK] Ready to fly!")
+        print(f"   JSON file: {args.output} (for dashboard upload)")
+        print(f"   .waypoints file: {waypoints_file} (Mission Planner format for comparison)")
         
     except ImportError as e:
         print(f"\n[ERROR] Missing Python library: {e}", file=sys.stderr)

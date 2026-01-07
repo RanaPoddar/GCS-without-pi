@@ -348,6 +348,19 @@ class MissionControl {
             if (file) this.handleKMLUpload(file);
         });
         
+        // Waypoints File Upload
+        const waypointsFileInput = document.getElementById('waypointsFileInput');
+        const uploadWaypointsBtn = document.getElementById('uploadWaypointsBtn');
+        
+        uploadWaypointsBtn.addEventListener('click', () => {
+            waypointsFileInput.click();
+        });
+        
+        waypointsFileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) this.handleWaypointsFileUpload(file);
+        });
+        
         // Generate Grid
         document.getElementById('generateGrid').addEventListener('click', () => {
             this.generateSurveyGrid();
@@ -548,6 +561,123 @@ class MissionControl {
         } catch (error) {
             console.error('KML upload error:', error);
             this.addAlert('Failed to load KML file', 'error');
+        }
+    }
+    
+    // Handle .waypoints file upload
+    async handleWaypointsFileUpload(file) {
+        try {
+            this.addAlert(`📄 Reading ${file.name}...`, 'info');
+            
+            // Read file content
+            const waypointsContent = await file.text();
+            
+            // Basic validation
+            if (!waypointsContent.includes('QGC WPL')) {
+                throw new Error('Invalid .waypoints file format. Must be QGC WPL 110 format.');
+            }
+            
+            console.log(`📄 Loaded .waypoints file: ${file.name}`);
+            console.log(`   Lines: ${waypointsContent.split('\n').length}`);
+            
+            // Parse waypoints for preview on map
+            const lines = waypointsContent.trim().split('\n');
+            const previewWaypoints = [];
+            
+            // Skip header, parse waypoints
+            for (let i = 1; i < lines.length; i++) {
+                const parts = lines[i].trim().split('\t');
+                if (parts.length >= 12) {
+                    const lat = parseFloat(parts[8]);
+                    const lon = parseFloat(parts[9]);
+                    const alt = parseFloat(parts[10]);
+                    const command = parseInt(parts[3]);
+                    
+                    // Only show navigation waypoints (cmd 16), skip HOME/TAKEOFF/RTL
+                    if (command === 16 && lat !== 0 && lon !== 0) {
+                        previewWaypoints.push({ lat, lon, alt });
+                    }
+                }
+            }
+            
+            console.log(`   Survey waypoints for preview: ${previewWaypoints.length}`);
+            
+            // Display waypoints on map
+            if (previewWaypoints.length > 0) {
+                this.displayWaypointsPreview(previewWaypoints);
+                
+                // Update mission info
+                document.getElementById('fileName').textContent = file.name;
+                document.getElementById('waypointCount').textContent = previewWaypoints.length;
+                document.getElementById('missionArea').textContent = 'From File';
+                document.getElementById('missionInfo').classList.remove('hidden');
+            }
+            
+            // Store waypoints content for upload
+            this.missionData = {
+                fileName: file.name,
+                waypointsFileContent: waypointsContent,
+                waypoints: previewWaypoints, // For preview only
+                uploadMethod: 'waypoints_file' // Flag to use direct upload
+            };
+            
+            this.addAlert(`✅ Waypoints file loaded: ${file.name}`, 'success');
+            this.addAlert(`📊 ${previewWaypoints.length} survey waypoints ready`, 'info');
+            
+            const confirmMsg = `✅ Mission Planner .waypoints File Loaded!\n\n` +
+                `File: ${file.name}\n` +
+                `Survey Waypoints: ${previewWaypoints.length}\n` +
+                `Total Items: ${lines.length - 1}\n\n` +
+                `This file will be uploaded directly to Pixhawk in Mission Planner format.\n\n` +
+                `Click "Start Mission" when drone is connected.`;
+            alert(confirmMsg);
+            
+            this.updateMissionStatus('ready');
+            document.getElementById('startMission').disabled = false;
+            
+        } catch (error) {
+            console.error('Waypoints file upload error:', error);
+            this.addAlert(`❌ Failed to load .waypoints file: ${error.message}`, 'error');
+            alert(`❌ Failed to load .waypoints file!\n\n${error.message}`);
+        }
+    }
+    
+    // Display waypoints preview on map
+    displayWaypointsPreview(waypoints) {
+        // Clear existing preview
+        if (this.waypointPreviewLayer) {
+            this.waypointPreviewLayer.clearLayers();
+        } else {
+            this.waypointPreviewLayer = L.layerGroup().addTo(this.map);
+        }
+        
+        // Add waypoint markers
+        waypoints.forEach((wp, index) => {
+            const marker = L.circleMarker([wp.lat, wp.lon], {
+                radius: 4,
+                fillColor: '#00ff00',
+                color: '#ffffff',
+                weight: 1,
+                opacity: 1,
+                fillOpacity: 0.8
+            }).addTo(this.waypointPreviewLayer);
+            
+            marker.bindPopup(`WP ${index + 1}<br>Alt: ${wp.alt}m`);
+        });
+        
+        // Draw path line
+        const pathCoords = waypoints.map(wp => [wp.lat, wp.lon]);
+        L.polyline(pathCoords, {
+            color: '#00ff00',
+            weight: 2,
+            opacity: 0.6,
+            dashArray: '5, 10'
+        }).addTo(this.waypointPreviewLayer);
+        
+        // Fit map to waypoints
+        if (waypoints.length > 0) {
+            const bounds = L.latLngBounds(pathCoords);
+            this.map.fitBounds(bounds, { padding: [50, 50] });
         }
     }
     
@@ -1417,11 +1547,28 @@ class MissionControl {
             
             let uploadResponse;
             try {
-                uploadResponse = await fetch(`http://localhost:5000/drone/${droneId}/mission/upload`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ waypoints })
-                });
+                // Check if we should use .waypoints file direct upload
+                if (this.missionData.uploadMethod === 'waypoints_file' && this.missionData.waypointsFileContent) {
+                    // Direct .waypoints file upload (Mission Planner format)
+                    console.log('📄 Using direct .waypoints file upload (Mission Planner format)');
+                    this.addAlert('📄 Uploading Mission Planner .waypoints file...', 'info');
+                    
+                    uploadResponse = await fetch(`http://localhost:5000/drone/${droneId}/mission/upload_waypoints_file`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ 
+                            waypoints_file_content: this.missionData.waypointsFileContent 
+                        })
+                    });
+                } else {
+                    // JSON waypoints upload (backend constructs mission)
+                    console.log('📄 Using JSON waypoints upload (backend constructs mission)');
+                    uploadResponse = await fetch(`http://localhost:5000/drone/${droneId}/mission/upload`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ waypoints })
+                    });
+                }
             } catch (fetchError) {
                 console.error('Network error during mission upload:', fetchError);
                 const errorMsg = '❌ Cannot connect to PyMAVLink service!\n\nPlease ensure:\n1. PyMAVLink service is running on port 5000\n2. Run: python external-services/pymavlink_service.py\n3. Or use: ./start-pymavlink.sh';
@@ -1456,9 +1603,15 @@ class MissionControl {
                 throw new Error('Mission upload returned failure');
             }
             
-            // Note: PyMAVLink automatically adds NAV and TAKEOFF waypoints
-            const totalWaypoints = uploadResult.waypoint_count;
-            this.addAlert(`✅ ${totalWaypoints} waypoints uploaded (includes NAV→START + TAKEOFF)`, 'success');
+            // Display success message based on upload method
+            if (this.missionData.uploadMethod === 'waypoints_file') {
+                this.addAlert(`✅ Mission Planner .waypoints file uploaded successfully!`, 'success');
+                this.addAlert(`📄 Exact Mission Planner format - guaranteed compatibility`, 'info');
+            } else {
+                // Note: PyMAVLink automatically adds NAV and TAKEOFF waypoints
+                const totalWaypoints = uploadResult.waypoint_count;
+                this.addAlert(`✅ ${totalWaypoints} waypoints uploaded (includes NAV→START + TAKEOFF)`, 'success');
+            }
             
             // ARM the drone if not already armed
             this.addAlert('🔧 Arming drone...', 'info');

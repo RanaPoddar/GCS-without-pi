@@ -377,6 +377,40 @@ body {
     color: var(--text-tertiary);
 }
 
+/* Upload Divider */
+.upload-divider {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    margin: var(--spacing-lg) 0;
+    color: var(--text-tertiary);
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.upload-divider::before,
+.upload-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border-default);
+}
+
+/* Waypoints Upload Zone */
+.waypoints-upload-zone {
+    text-align: center;
+    padding: var(--spacing-md);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+}
+
+.upload-hint {
+    font-size: 0.75rem;
+    color: var(--text-tertiary);
+    margin-top: var(--spacing-sm);
+}
+
 /* Mission Info */
 .mission-info {
     background: var(--bg-tertiary);

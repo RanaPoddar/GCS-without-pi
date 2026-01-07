@@ -75,6 +75,7 @@ class DroneConnection:
         self.mission_active = False
         self.statustext_log = []  # Store last 20 STATUSTEXT messages for debugging
         self.statustext_max = 20
+        self.uploading_mission = False  # Flag to pause telemetry during mission upload
         
     def connect(self):
         """Establish connection to Pixhawk (or simulation)"""
@@ -196,6 +197,11 @@ class DroneConnection:
         
         while self.running and self.connected:
             try:
+                # PAUSE TELEMETRY DURING MISSION UPLOAD to avoid threading race conditions
+                if self.uploading_mission:
+                    time.sleep(0.1)  # Sleep briefly and retry
+                    continue
+                
                 msg = self.master.recv_match(blocking=True, timeout=1.0)
                 
                 if msg is None:
@@ -672,6 +678,243 @@ class DroneConnection:
             logger.error(f"Failed to navigate Drone {self.drone_id}: {e}")
             return False
     
+    def parse_waypoints_file(self, waypoints_content):
+        """Parse Mission Planner .waypoints file format
+        
+        Format: QGC WPL 110
+        seq\tcurrent\tframe\tcommand\tparam1\tparam2\tparam3\tparam4\tlat\tlon\talt\tautocontinue
+        
+        Returns: List of waypoint dicts ready for upload
+        """
+        waypoints = []
+        lines = waypoints_content.strip().split('\n')
+        
+        # Check header
+        if not lines or 'QGC WPL' not in lines[0]:
+            logger.error("Invalid .waypoints file: missing QGC WPL header")
+            return None
+        
+        # Parse waypoints (skip header line 0)
+        for line_num, line in enumerate(lines[1:], start=1):
+            parts = line.strip().split('\t')
+            if len(parts) < 12:
+                logger.warning(f"Skipping malformed line {line_num}: {line}")
+                continue
+            
+            try:
+                seq = int(parts[0])
+                current = int(parts[1])
+                frame = int(parts[2])
+                command = int(parts[3])
+                param1 = float(parts[4])
+                param2 = float(parts[5])
+                param3 = float(parts[6])
+                param4 = float(parts[7])
+                lat = float(parts[8])
+                lon = float(parts[9])
+                alt = float(parts[10])
+                autocontinue = int(parts[11])
+                
+                # Convert frame number to MAVLink constant
+                frame_map = {
+                    0: mavutil.mavlink.MAV_FRAME_GLOBAL,
+                    3: mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,
+                    6: mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT
+                }
+                frame_const = frame_map.get(frame, mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT)
+                
+                waypoints.append({
+                    'seq': seq,
+                    'current': current,
+                    'frame': frame_const,
+                    'command': command,
+                    'param1': param1,
+                    'param2': param2,
+                    'param3': param3,
+                    'param4': param4,
+                    'latitude': lat,
+                    'longitude': lon,
+                    'altitude': alt,
+                    'autocontinue': autocontinue
+                })
+                
+            except (ValueError, IndexError) as e:
+                logger.error(f"Error parsing line {line_num}: {e}")
+                continue
+        
+        logger.info(f"📄 Parsed .waypoints file: {len(waypoints)} mission items")
+        return waypoints
+    
+    def upload_waypoints_file(self, waypoints_content):
+        """Upload mission from Mission Planner .waypoints file
+        
+        This bypasses our mission construction and uses the exact mission
+        from the .waypoints file (which matches Mission Planner format)
+        """
+        try:
+            # Parse the .waypoints file
+            waypoints = self.parse_waypoints_file(waypoints_content)
+            if not waypoints:
+                logger.error("Failed to parse .waypoints file")
+                return False
+            
+            logger.info(f"📤 Uploading mission from .waypoints file ({len(waypoints)} items)")
+            
+            if self.simulation:
+                logger.info(f"🎮 SIMULATION: Pretending to upload {len(waypoints)} waypoints from file...")
+                time.sleep(0.5)
+                
+                # Store waypoints for start_mission() to work
+                survey_waypoints = []
+                for wp in waypoints:
+                    if wp['command'] == mavutil.mavlink.MAV_CMD_NAV_WAYPOINT and wp['latitude'] != 0 and wp['longitude'] != 0:
+                        survey_waypoints.append({
+                            'latitude': wp['latitude'],
+                            'longitude': wp['longitude'],
+                            'altitude': wp['altitude']
+                        })
+                
+                self.mission_waypoints = survey_waypoints
+                logger.info(f"✅ Simulated .waypoints upload successful ({len(survey_waypoints)} survey waypoints)")
+                return True
+            
+            # Pause telemetry
+            logger.info(f"⏸️  Pausing telemetry loop...")
+            self.uploading_mission = True
+            time.sleep(0.3)
+            
+            try:
+                # Clear existing mission
+                logger.info(f"📥 Clearing existing mission...")
+                clear_confirmed = False
+                for attempt in range(3):
+                    self.master.mav.mission_clear_all_send(
+                        self.master.target_system,
+                        self.master.target_component,
+                        mavutil.mavlink.MAV_MISSION_TYPE_MISSION
+                    )
+                    
+                    ack = self.master.recv_match(type='MISSION_ACK', blocking=True, timeout=3.0)
+                    if ack and ack.type == mavutil.mavlink.MAV_MISSION_ACCEPTED:
+                        logger.info(f"✅ Mission cleared (attempt {attempt+1})")
+                        clear_confirmed = True
+                        break
+                    time.sleep(0.5)
+                
+                if not clear_confirmed:
+                    logger.error("❌ Failed to clear mission after 3 attempts")
+                    return False
+                
+                time.sleep(4.0)  # EEPROM clear delay
+                
+                # Send mission count
+                self.master.mav.mission_count_send(
+                    self.master.target_system,
+                    self.master.target_component,
+                    len(waypoints),
+                    mavutil.mavlink.MAV_MISSION_TYPE_MISSION
+                )
+                logger.info(f"📤 Mission count sent: {len(waypoints)} items")
+                time.sleep(0.5)
+                
+                # Upload each waypoint
+                waypoints_sent = {}
+                wp_index = 0
+                timeout_count = 0
+                max_timeouts = 5
+                
+                while wp_index < len(waypoints) and timeout_count < max_timeouts:
+                    msg = self.master.recv_match(type=['MISSION_REQUEST_INT', 'MISSION_REQUEST', 'HEARTBEAT'], 
+                                                 blocking=True, timeout=15)
+                    
+                    if msg is None:
+                        timeout_count += 1
+                        logger.warning(f"⏱️  Timeout {timeout_count}/{max_timeouts} waiting for request")
+                        continue
+                    
+                    if msg.get_type() == 'HEARTBEAT':
+                        continue
+                    
+                    msg_type = msg.get_type()
+                    if msg_type in ['MISSION_REQUEST_INT', 'MISSION_REQUEST']:
+                        req_seq = msg.seq
+                        
+                        if req_seq >= len(waypoints):
+                            logger.error(f"❌ Requested seq {req_seq} out of range (max {len(waypoints)-1})")
+                            break
+                        
+                        if req_seq in waypoints_sent:
+                            logger.warning(f"⚠️ Resending waypoint {req_seq} (already sent)")
+                        
+                        # Get waypoint from parsed file
+                        wp = waypoints[req_seq]
+                        
+                        # Send using mission_item_send (matches Mission Planner)
+                        self.master.mav.mission_item_send(
+                            self.master.target_system,
+                            self.master.target_component,
+                            wp['seq'],
+                            wp['frame'],
+                            wp['command'],
+                            wp['current'],
+                            wp['autocontinue'],
+                            wp['param1'], wp['param2'], wp['param3'], wp['param4'],
+                            wp['latitude'], wp['longitude'], wp['altitude']
+                        )
+                        
+                        waypoints_sent[req_seq] = True
+                        if req_seq == wp_index:
+                            wp_index += 1
+                        
+                        cmd_names = {16: "HOME" if req_seq == 0 else "WAYPOINT", 22: "TAKEOFF", 178: "CHANGE_SPEED", 20: "RTL"}
+                        cmd_name = cmd_names.get(wp['command'], f"CMD_{wp['command']}")
+                        logger.info(f"  {cmd_name} {req_seq+1}/{len(waypoints)} uploaded (seq={req_seq})")
+                        time.sleep(0.05)
+                
+                # Wait for mission ACK
+                logger.info(f"⏳ Waiting for mission ACK...")
+                ack_received = False
+                for attempt in range(5):
+                    ack = self.master.recv_match(type='MISSION_ACK', blocking=True, timeout=3.0)
+                    if ack:
+                        if ack.type == mavutil.mavlink.MAV_MISSION_ACCEPTED:
+                            logger.info(f"✅ Mission ACK received: ACCEPTED")
+                            ack_received = True
+                            break
+                        else:
+                            logger.error(f"❌ Mission ACK: {ack.type}")
+                
+                if ack_received:
+                    time.sleep(2.0)  # EEPROM write delay
+                    
+                    # CRITICAL: Store waypoints for start_mission() to work
+                    # Extract survey waypoints (command 16, not HOME/TAKEOFF/RTL)
+                    survey_waypoints = []
+                    for wp in waypoints:
+                        if wp['command'] == mavutil.mavlink.MAV_CMD_NAV_WAYPOINT and wp['latitude'] != 0 and wp['longitude'] != 0:
+                            survey_waypoints.append({
+                                'latitude': wp['latitude'],
+                                'longitude': wp['longitude'],
+                                'altitude': wp['altitude']
+                            })
+                    
+                    self.mission_waypoints = survey_waypoints
+                    logger.info(f"✅ Mission from .waypoints file uploaded successfully!")
+                    logger.info(f"   Total: {len(waypoints)} mission items ({len(survey_waypoints)} survey waypoints)")
+                    return True
+                else:
+                    logger.error(f"❌ No mission ACK received")
+                    return False
+                    
+            finally:
+                logger.info(f"▶️  Resuming telemetry loop...")
+                self.uploading_mission = False
+                
+        except Exception as e:
+            logger.error(f"Failed to upload .waypoints file: {e}")
+            self.uploading_mission = False
+            return False
+    
     def upload_mission_waypoints(self, waypoints):
         """Upload mission waypoints to drone (or simulate)"""
         try:
@@ -690,43 +933,75 @@ class DroneConnection:
             current_lat = self.telemetry.get('latitude', first_lat)
             current_lon = self.telemetry.get('longitude', first_lon)
             
-            logger.info(f"Mission sequence:")
-            logger.info(f"  1. Takeoff at current position ({current_lat:.6f}, {current_lon:.6f}) to {survey_alt}m")
+            logger.info(f"Mission sequence (Mission Planner format):")
+            logger.info(f"  0. HOME at current position ({current_lat:.6f}, {current_lon:.6f})")
+            logger.info(f"  1. TAKEOFF at ({current_lat:.6f}, {current_lon:.6f}) to {survey_alt}m")
             logger.info(f"  2. Navigate to first survey waypoint ({first_lat:.6f}, {first_lon:.6f})")
             logger.info(f"  3. Execute {len(waypoints)} survey waypoints")
             logger.info(f"  4. Return to Launch (RTL)")
             
-            # Waypoint 0: Takeoff at current position to mission altitude
-            # (drone stays at current location, just climbs to altitude)
-            takeoff_waypoint = {
-                'latitude': current_lat,
-                'longitude': current_lon,
-                'altitude': survey_alt,
-                'command': mavutil.mavlink.MAV_CMD_NAV_TAKEOFF
+            # Waypoint 0: HOME waypoint (REQUIRED by ArduPilot before TAKEOFF)
+            # Mission Planner always uploads HOME first at seq 0
+            home_waypoint = {
+                'latitude': current_lat,  # Current drone position
+                'longitude': current_lon,  # Current drone position
+                'altitude': self.telemetry.get('altitude', 633.31),  # Current altitude (AMSL)
+                'command': mavutil.mavlink.MAV_CMD_NAV_WAYPOINT,  # HOME uses NAV_WAYPOINT
+                'param1': 0,
+                'param2': 0,
+                'param3': 0,
+                'param4': 0,
+                'autocontinue': 1
             }
             
-            # Waypoint 1: Navigate to first survey point at mission altitude
+            # Waypoint 1: TAKEOFF (comes AFTER HOME in Mission Planner format)
+            # CRITICAL: ArduCopter requires actual coordinates for TAKEOFF in AUTO mode
+            # Using current position (same as HOME) - NOT 0,0 which is ignored
+            takeoff_waypoint = {
+                'latitude': current_lat,  # Use HOME position for takeoff
+                'longitude': current_lon,  # Use HOME position for takeoff
+                'altitude': survey_alt,  # Altitude to climb to during takeoff
+                'command': mavutil.mavlink.MAV_CMD_NAV_TAKEOFF,
+                'param1': 0,  # Minimum pitch
+                'param2': 0,  # Empty
+                'param3': 0,  # Empty  
+                'param4': 0,  # Yaw angle (0 = no change, Mission Planner uses 0 not NaN)
+                'autocontinue': 1
+            }
+            logger.info(f"🚁 TAKEOFF waypoint: lat={current_lat:.8f}, lon={current_lon:.8f}, alt={survey_alt}m (NOT 0,0!)")
+            
+            # Waypoint 2: Navigate to first survey point at mission altitude
             # (fly from takeoff location to first survey waypoint)
             nav_to_survey = {
                 'latitude': first_lat,
                 'longitude': first_lon,
                 'altitude': survey_alt,
-                'command': mavutil.mavlink.MAV_CMD_NAV_WAYPOINT
+                'command': mavutil.mavlink.MAV_CMD_NAV_WAYPOINT,
+                'param1': 0,
+                'param2': 0,
+                'param3': 0,
+                'param4': 0,
+                'autocontinue': 1
             }
             
             # Last Waypoint: Return to Launch (RTL)
-            # Note: RTL command uses current position, lat/lon are ignored but required for protocol
             rtl_waypoint = {
-                'latitude': current_lat,
-                'longitude': current_lon,
-                'altitude': survey_alt,  # RTL altitude (will use parameter RTL_ALT instead)
-                'command': mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH
+                'latitude': 0,  # RTL uses 0,0 (ignored)
+                'longitude': 0,  # RTL uses 0,0 (ignored)
+                'altitude': 0,  # RTL altitude from parameter
+                'command': mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH,
+                'param1': 0,
+                'param2': 0,
+                'param3': 0,
+                'param4': 0,
+                'autocontinue': 1
             }
             
-            # Build complete mission: TAKEOFF + NAV_TO_START + SURVEY_WAYPOINTS + RTL
-            full_mission = [takeoff_waypoint, nav_to_survey] + waypoints + [rtl_waypoint]
+            # Build complete mission: HOME + TAKEOFF + NAV_TO_START + SURVEY_WAYPOINTS + RTL
+            # This matches Mission Planner's exact structure
+            full_mission = [home_waypoint, takeoff_waypoint, nav_to_survey] + waypoints + [rtl_waypoint]
             
-            logger.info(f" Uploading {len(full_mission)} waypoints (TAKEOFF + NAV + {len(waypoints)} survey + RTL) to Drone {self.drone_id}")
+            logger.info(f" Uploading {len(full_mission)} waypoints (HOME + TAKEOFF + NAV + {len(waypoints)} survey + RTL) to Drone {self.drone_id}")
             
             if self.simulation:
                 logger.info(f" SIMULATION: Pretending to upload {len(full_mission)} waypoints...")
@@ -739,77 +1014,391 @@ class DroneConnection:
                 logger.info(f" Simulated mission upload successful for Drone {self.drone_id}")
                 return True
             
-            # Clear existing mission (modern MAVLink protocol)
-            self.master.mav.mission_clear_all_send(
-                self.master.target_system,
-                self.master.target_component,
-                mavutil.mavlink.MAV_MISSION_TYPE_MISSION
-            )
-            time.sleep(0.5)
+            # CRITICAL: Pause telemetry loop BEFORE mission operations to prevent message conflicts
+            # The telemetry thread would consume MISSION_ACK messages needed for upload verification
+            logger.info(f"⏸️  Pausing telemetry loop to avoid message conflicts...")
+            self.uploading_mission = True
+            time.sleep(0.3)  # Give telemetry thread time to pause
             
-            # Send waypoint count (modern MAVLink protocol)
-            self.master.mav.mission_count_send(
-                self.master.target_system,
-                self.master.target_component,
-                len(full_mission),
-                mavutil.mavlink.MAV_MISSION_TYPE_MISSION
-            )
-            time.sleep(0.3)
-            
-            # Upload each waypoint using MAVLink 2 (mission_item_int)
-            for i, wp in enumerate(full_mission):
-                # Wait for waypoint request (INT version for MAVLink 2)
-                msg = self.master.recv_match(type=['MISSION_REQUEST_INT', 'MISSION_REQUEST'], blocking=True, timeout=5)
-                if msg and msg.seq == i:
-                    # Determine command type
-                    cmd = wp.get('command', mavutil.mavlink.MAV_CMD_NAV_WAYPOINT)
-                    
-                    # Get coordinates
-                    lat = wp.get('latitude', wp.get('lat', 0))
-                    lon = wp.get('longitude', wp.get('lon', 0))
-                    alt = wp.get('altitude', wp.get('alt', 0))
-                    
-                    # Get waypoint parameters (with ArduPilot-compliant defaults)
-                    delay = wp.get('delay', 0)  # Hold time at waypoint
-                    acceptance_radius = wp.get('acceptance_radius', 0)  # 0 = use WPNAV_RADIUS parameter
-                    pass_radius = wp.get('pass_radius', 0)  # For corner cutting behavior
-                    yaw_angle = wp.get('yaw', 0)  # Target yaw angle
-                    
-                    # Use mission_item_int_send for MAVLink 2 (lat/lon as integers)
-                    self.master.mav.mission_item_int_send(
+            try:
+                # Drain any pending messages before starting mission operations
+                logger.info(f"📥 Draining message buffer before mission clear...")
+                drain_start = time.time()
+                drained_count = 0
+                while time.time() - drain_start < 0.5:
+                    msg = self.master.recv_match(blocking=False, timeout=0.1)
+                    if msg is None:
+                        break
+                    drained_count += 1
+                logger.info(f"📥 Drained {drained_count} buffered messages")
+                
+                # Clear existing mission (modern MAVLink protocol)
+                logger.info(f"📥 Clearing existing mission from drone...")
+                clear_confirmed = False
+                clear_attempts = 0
+                max_clear_attempts = 3
+                
+                while not clear_confirmed and clear_attempts < max_clear_attempts:
+                    self.master.mav.mission_clear_all_send(
                         self.master.target_system,
                         self.master.target_component,
-                        i,  # seq
-                        mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
-                        cmd,  # Use appropriate command
-                        0,  # current (0=not current, 1=current waypoint)
-                        1,  # autocontinue
-                        delay,  # param1 (hold time for waypoint, min pitch for takeoff)
-                        acceptance_radius,  # param2 (0 = use WPNAV_RADIUS from autopilot)
-                        pass_radius,  # param3 (pass through waypoint for S-curve navigation)
-                        yaw_angle,  # param4 (yaw angle in degrees, NaN for unchanged)
-                        int(lat * 1e7),  # x: latitude in degrees * 1E7
-                        int(lon * 1e7),  # y: longitude in degrees * 1E7
-                        alt,             # z: altitude in meters
-                        mavutil.mavlink.MAV_MISSION_TYPE_MISSION  # mission_type
+                        mavutil.mavlink.MAV_MISSION_TYPE_MISSION
                     )
-                    cmd_name = "TAKEOFF" if cmd == mavutil.mavlink.MAV_CMD_NAV_TAKEOFF else "WAYPOINT"
-                    logger.info(f"  {cmd_name} {i+1}/{len(full_mission)} uploaded")
+                    clear_attempts += 1
+                    logger.info(f"📤 Sent MISSION_CLEAR_ALL (attempt {clear_attempts}/{max_clear_attempts})")
+                    
+                    # Wait for MISSION_ACK indicating mission was cleared
+                    # Increased timeout for Pixhawk 2.4.8 (older hardware may be slower)
+                    ack_received = False
+                    for i in range(8):  # 8 attempts x 1.5s = 12 seconds total timeout
+                        msg = self.master.recv_match(type='MISSION_ACK', blocking=True, timeout=1.5)
+                        if msg:
+                            logger.info(f"📥 Received MISSION_ACK: type={msg.type} (0=ACCEPTED)")
+                            if msg.type == mavutil.mavlink.MAV_MISSION_ACCEPTED:
+                                logger.info(f"✅ Mission cleared successfully (attempt {clear_attempts}, ACK after {(i+1)*1.5:.1f}s)")
+                                clear_confirmed = True
+                                ack_received = True
+                                break
+                    
+                    if not ack_received and clear_attempts < max_clear_attempts:
+                        logger.warning(f"⚠️ Mission clear ACK not received after 12s, retrying... (attempt {clear_attempts}/{max_clear_attempts})")
+                        time.sleep(0.5)  # Brief pause before retry
+                
+                if not clear_confirmed:
+                    logger.error(f"❌ CRITICAL: Could not confirm mission clear after {max_clear_attempts} attempts")
+                    logger.error(f"   Pixhawk 2.4.8 not responding to MISSION_CLEAR_ALL command")
+                    logger.error(f"   Solution: 1) Check MAVLink connection, 2) Clear manually in Mission Planner/QGroundControl")
+                    return False
+                
+                # CRITICAL: Verify mission was actually cleared by requesting mission count
+                logger.info(f"🔍 Verifying mission is empty (requesting mission count)...")
+                self.master.mav.mission_request_list_send(
+                    self.master.target_system,
+                    self.master.target_component,
+                    mavutil.mavlink.MAV_MISSION_TYPE_MISSION
+                )
+                
+                count_msg = self.master.recv_match(type='MISSION_COUNT', blocking=True, timeout=3.0)
+                if count_msg:
+                    if count_msg.count == 0:
+                        logger.info(f"✅ Verified mission is empty (count=0)")
+                    else:
+                        logger.error(f"❌ CRITICAL: Mission clear failed! Drone still has {count_msg.count} waypoints in memory")
+                        logger.error(f"   Even though MISSION_ACK was received, the mission wasn't actually cleared")
+                        logger.error(f"   Solution: Power cycle the drone to force EEPROM clear, or use Mission Planner to clear")
+                        return False
                 else:
-                    logger.error(f"No request received for waypoint {i}")
+                    logger.warning(f"⚠️ Could not verify mission count after clear (timeout)")
+                
+                time.sleep(0.5)  # Delay to ensure EEPROM write completes
+                
+                # Drain any pending messages before starting waypoint upload
+                logger.info(f"📥 Draining message buffer before waypoint upload...")
+                drain_timeout = time.time()
+                drained_count_2 = 0
+                while time.time() - drain_timeout < 0.5:
+                    msg = self.master.recv_match(blocking=False, timeout=0.1)
+                    if msg is None:
+                        break
+                    drained_count_2 += 1
+                logger.info(f"📥 Drained {drained_count_2} buffered messages before waypoint upload")
+                
+                # Send waypoint count (modern MAVLink protocol)
+                self.master.mav.mission_count_send(
+                    self.master.target_system,
+                    self.master.target_component,
+                    len(full_mission),
+                    mavutil.mavlink.MAV_MISSION_TYPE_MISSION
+                )
+                logger.info(f"📤 Mission count sent: {len(full_mission)} waypoints (seq 0=HOME, seq 1=TAKEOFF)")
+                time.sleep(0.5)  # Increased wait time for drone to process count
+                
+                # Upload each waypoint using MAVLink 2 (mission_item_int)
+                waypoints_sent = {}  # Track which waypoints we've already sent
+                wp_index = 0
+                timeout_count = 0
+                max_timeouts = 5  # Increased from 3 to 5
+                count_resend_attempts = 0
+                max_count_resends = 2
+                
+                while wp_index < len(full_mission) and timeout_count < max_timeouts:
+                    # Wait for waypoint request (INT version for MAVLink 2)
+                    # Use longer timeout to handle slow drone responses
+                    msg = self.master.recv_match(type=['MISSION_REQUEST_INT', 'MISSION_REQUEST', 'HEARTBEAT'], blocking=True, timeout=15)
+                    
+                    if msg is None:
+                        # Timeout occurred - drone hasn't requested first waypoint yet
+                        timeout_count += 1
+                        logger.warning(f"⏱️  Waypoint request timeout ({timeout_count}/{max_timeouts}). Waiting for seq={wp_index}")
+                        
+                        # If we haven't even received the first waypoint request, try resending the count
+                        if wp_index == 0 and count_resend_attempts < max_count_resends:
+                            count_resend_attempts += 1
+                            logger.info(f"🔄 Resending mission count (attempt {count_resend_attempts}/{max_count_resends})...")
+                            self.master.mav.mission_count_send(
+                                self.master.target_system,
+                                self.master.target_component,
+                                len(full_mission),
+                                mavutil.mavlink.MAV_MISSION_TYPE_MISSION
+                            )
+                            time.sleep(1.0)  # Wait longer after resend
+                            continue  # Don't increment timeout_count for resend
+                        
+                        if timeout_count >= max_timeouts:
+                            logger.error(f"❌ Waypoint upload timeout after {max_timeouts} attempts on waypoint {wp_index}")
+                            return False
+                        time.sleep(0.5)
+                        continue
+                    
+                    # Check for request messages
+                    if msg.get_type() in ['MISSION_REQUEST_INT', 'MISSION_REQUEST']:
+                        req_seq = msg.seq
+                        timeout_count = 0  # Reset timeout counter on successful request
+                        count_resend_attempts = 0  # Reset count resend attempts
+                        
+                        # Handle out-of-order requests by resending previous waypoints if needed
+                        if req_seq < wp_index and req_seq in waypoints_sent:
+                            logger.info(f"  Re-sending waypoint {req_seq+1}/{len(full_mission)} (drone requested it again)")
+                            wp = full_mission[req_seq]
+                        elif req_seq == wp_index:
+                            # Normal sequential request
+                            wp = full_mission[wp_index]
+                        elif req_seq > wp_index:
+                            # Drone jumped ahead - this shouldn't happen, log it
+                            logger.warning(f"⚠️  Drone requested waypoint {req_seq} but we're at {wp_index}, jumping ahead")
+                            wp_index = req_seq
+                            wp = full_mission[wp_index]
+                        else:
+                            # Out of sequence, skip
+                            continue
+                        
+                        # Determine command type (handle both string names and integer IDs)
+                        cmd_input = wp.get('command', mavutil.mavlink.MAV_CMD_NAV_WAYPOINT)
+                        
+                        # Map string command names to integer IDs if needed
+                        command_map = {
+                            'TAKEOFF': mavutil.mavlink.MAV_CMD_NAV_TAKEOFF,
+                            'NAV_TAKEOFF': mavutil.mavlink.MAV_CMD_NAV_TAKEOFF,
+                            'WAYPOINT': mavutil.mavlink.MAV_CMD_NAV_WAYPOINT,
+                            'NAV_WAYPOINT': mavutil.mavlink.MAV_CMD_NAV_WAYPOINT,
+                            'RTL': mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH,
+                            'RETURN_TO_LAUNCH': mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH,
+                            'NAV_RETURN_TO_LAUNCH': mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH,
+                        }
+                        
+                        if isinstance(cmd_input, str):
+                            cmd = command_map.get(cmd_input.upper(), mavutil.mavlink.MAV_CMD_NAV_WAYPOINT)
+                            logger.debug(f"  Converted command string '{cmd_input}' to ID {cmd}")
+                        else:
+                            cmd = int(cmd_input)
+                        
+                        # Get coordinates - ensure they're floats for proper conversion
+                        lat = float(wp.get('latitude', wp.get('lat', 0)))
+                        lon = float(wp.get('longitude', wp.get('lon', 0)))
+                        alt = float(wp.get('altitude', wp.get('alt', 0)))
+                        
+                        # Get waypoint parameters with command-specific defaults
+                        # For TAKEOFF: param1=min_pitch, param2=empty, param3=empty, param4=yaw
+                        # For WAYPOINT: param1=hold_time, param2=accept_radius, param3=pass_radius, param4=yaw
+                        param1 = float(wp.get('param1', wp.get('delay', 0)))
+                        param2 = float(wp.get('param2', wp.get('acceptance_radius', 0)))
+                        param3 = float(wp.get('param3', wp.get('pass_radius', 0)))
+                        param4 = wp.get('param4', wp.get('yaw', 0))
+                        # Handle NaN for yaw (means "don't change yaw")
+                        if isinstance(param4, float) and (param4 != param4):  # NaN check
+                            param4_float = float('nan')
+                        else:
+                            param4_float = float(param4)
+                        
+                        # Get autocontinue flag (default 1)
+                        autocontinue = int(wp.get('autocontinue', 1))
+                        
+                        # CRITICAL: Use frame 3 (GLOBAL_RELATIVE_ALT) like Mission Planner
+                        # Frame 3 = coordinates in degrees (float), NOT E7 integer format
+                        # HOME (seq 0) uses altitude AMSL, others use relative altitude
+                        if req_seq == 0:  # HOME waypoint uses AMSL altitude
+                            frame = mavutil.mavlink.MAV_FRAME_GLOBAL
+                        else:  # All other waypoints use relative altitude
+                            frame = mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT
+                        
+                        # Use mission_item_send (NOT mission_item_int) to match Mission Planner
+                        # Mission Planner uses the non-INT version with float coordinates
+                        self.master.mav.mission_item_send(
+                            self.master.target_system,
+                            self.master.target_component,
+                            req_seq,  # Sequence number
+                            frame,  # Frame type
+                            cmd,  # Command ID
+                            0,  # current (0=not current, 1=current for HOME)
+                            autocontinue,  # autocontinue
+                            param1, param2, param3, param4_float,  # Command parameters
+                            lat, lon,  # Latitude/Longitude in degrees (float)
+                            alt  # Altitude in meters (float)
+                        )
+                        
+                        # Mark this waypoint as sent
+                        waypoints_sent[req_seq] = True
+                        
+                        # Only advance wp_index if this is the next expected waypoint
+                        if req_seq == wp_index:
+                            wp_index += 1
+                        
+                        cmd_name = {
+                            mavutil.mavlink.MAV_CMD_NAV_TAKEOFF: "TAKEOFF",
+                            mavutil.mavlink.MAV_CMD_NAV_WAYPOINT: "WAYPOINT" if req_seq > 0 else "HOME",
+                            mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH: "RTL"
+                        }.get(cmd, "WAYPOINT")
+                        if req_seq == 0:
+                            cmd_name = "HOME"
+                        
+                        logger.info(f"  {cmd_name} {req_seq+1}/{len(full_mission)} uploaded (seq={req_seq})")
+                        time.sleep(0.05)  # Small delay between waypoint sends
+                    
+                    elif msg.get_type() == 'HEARTBEAT':
+                        # Heartbeat received - drone is alive but may not be ready for waypoints
+                        # Just continue waiting
+                        continue
+                
+                # Wait for mission ACK to confirm all waypoints received
+                logger.info(f"⏳ Waiting for mission ACK from Drone {self.drone_id}...")
+                ack_received = False
+                for attempt in range(5):  # Try up to 5 times
+                    msg = self.master.recv_match(type='MISSION_ACK', blocking=True, timeout=5)
+                    if msg and msg.type == mavutil.mavlink.MAV_MISSION_ACCEPTED:
+                        logger.info(f"✅ Mission ACK received - all {len(full_mission)} waypoints accepted")
+                        ack_received = True
+                        break
+                    elif msg:
+                        logger.warning(f"⚠️  Unexpected MISSION_ACK type: {msg.type} (expected {mavutil.mavlink.MAV_MISSION_ACCEPTED})")
+                    else:
+                        logger.warning(f"⏱️  Waiting for MISSION_ACK (attempt {attempt+1}/5)...")
+                        # Keep receiving other messages
+                        time.sleep(0.2)
+                
+                if ack_received:
+                    logger.info(f"✅ Mission ACK received - all {len(full_mission)} waypoints accepted")
+                    
+                    # CRITICAL: Wait for EEPROM write to complete on Pixhawk 2.4.8
+                    # The ACK is sent before EEPROM write finishes, causing verification to read old data
+                    logger.info(f"⏳ Waiting for EEPROM write to complete (Pixhawk 2.4.8 needs 4+ seconds)...")
+                    time.sleep(4.0)  # Increased from 2s to 4s - Pixhawk 2.4.8 EEPROM is VERY slow
+                    
+                    # Force mission protocol sync by requesting mission count
+                    # This helps ensure EEPROM write completed
+                    logger.info(f"🔄 Forcing mission protocol sync (requesting mission count)...")
+                    self.master.mav.mission_request_list_send(
+                        self.master.target_system,
+                        self.master.target_component,
+                        mavutil.mavlink.MAV_MISSION_TYPE_MISSION
+                    )
+                    
+                    count_msg = self.master.recv_match(type='MISSION_COUNT', blocking=True, timeout=3.0)
+                    if count_msg:
+                        if count_msg.count == len(full_mission):
+                            logger.info(f"✅ Mission count confirmed: {count_msg.count} waypoints in drone memory")
+                        else:
+                            logger.error(f"❌ Mission count mismatch! Expected {len(full_mission)}, got {count_msg.count}")
+                            logger.error(f"   EEPROM write may have failed")
+                            return False
+                    else:
+                        logger.warning(f"⚠️ Could not verify mission count after upload")
+                    
+                    # Additional delay after count sync to let EEPROM finish writing waypoint data
+                    logger.info(f"⏳ Additional 2s delay for EEPROM waypoint data write...")
+                    time.sleep(2.0)  # Total now: 4s initial + 2s after count = 6 seconds total wait
+                    
+                    # CRITICAL: DEBUG - Check what's actually at seq 0, 1, and 2
+                    logger.info(f"🔍 DEBUG: Reading mission items to verify structure...")
+                    
+                    for check_seq in [0, 1, 2]:
+                        self.master.mav.mission_request_send(
+                            self.master.target_system,
+                            self.master.target_component,
+                            check_seq
+                        )
+                        msg = self.master.recv_match(type=['MISSION_ITEM_INT', 'MISSION_ITEM'], blocking=True, timeout=3.0)
+                        if msg:
+                            cmd_name = {
+                                22: "TAKEOFF",
+                                16: "WAYPOINT/HOME", 
+                                20: "RTL",
+                                84: "NAV_VTOL_TAKEOFF"
+                            }.get(msg.command, f"UNKNOWN({msg.command})")
+                            if check_seq == 0:
+                                cmd_name = "HOME(NAV_WAYPOINT)"
+                            logger.info(f"   seq {check_seq}: command={cmd_name} (ID={msg.command}), alt={msg.z:.1f}m")
+                        else:
+                            logger.warning(f"   seq {check_seq}: NO RESPONSE")
+                        time.sleep(0.1)
+                    
+                    # Now verify TAKEOFF at seq 1 (Mission Planner format: seq 0=HOME, seq 1=TAKEOFF)
+                    logger.info(f"🔍 Verifying mission item 1 (TAKEOFF) before resuming telemetry...")
+                    verification_success = False
+                    
+                    for verify_attempt in range(3):
+                        # Wait 2 seconds between retry attempts to give EEPROM more time
+                        if verify_attempt > 0:
+                            logger.info(f"⏳ Waiting 2s before retry {verify_attempt+1}/3 (giving EEPROM more time)...")
+                            time.sleep(2.0)
+                        
+                        self.master.mav.mission_request_send(
+                            self.master.target_system,
+                            self.master.target_component,
+                            1  # Request mission item 1 (TAKEOFF in Mission Planner format)
+                        )
+                        
+                        timeout = 3.0  # Fixed 3s timeout for response
+                        msg = self.master.recv_match(type=['MISSION_ITEM_INT', 'MISSION_ITEM'], blocking=True, timeout=timeout)
+                        
+                        if msg:
+                            # Check if it's the TAKEOFF command
+                            if msg.command == mavutil.mavlink.MAV_CMD_NAV_TAKEOFF:
+                                logger.info(f"✅ Mission item 1 verified: TAKEOFF (ID={msg.command}) at alt={msg.z}m")
+                                logger.info(f"   Verification succeeded on attempt {verify_attempt+1}/3")
+                                logger.info(f"   Mission structure: seq 0=HOME, seq 1=TAKEOFF, seq 2+=waypoints")
+                                verification_success = True
+                                break
+                            else:
+                                # Wrong command - old data still in EEPROM
+                                logger.warning(f"⚠️ Mission item 1 is NOT TAKEOFF on attempt {verify_attempt+1}/3")
+                                logger.warning(f"   Got command ID={msg.command}, expected {mavutil.mavlink.MAV_CMD_NAV_TAKEOFF}")
+                                logger.warning(f"   EEPROM still writing or corrupted...")
+                                
+                                if verify_attempt == 2:  # Last attempt failed
+                                    logger.error(f"❌ Mission item 1 (TAKEOFF) verification FAILED after 3 attempts!")
+                                    logger.error(f"   Final read: command ID={msg.command} (expected 22=TAKEOFF)")
+                                    logger.error(f"   REQUIRED ACTION: POWER CYCLE drone NOW")
+                                    return False
+                        else:
+                            if verify_attempt < 2:
+                                logger.warning(f"⚠️ Mission item 1 verification timeout (attempt {verify_attempt+1}/3), retrying...")
+                    
+                    if not verification_success:
+                        logger.error(f"❌ Could not verify mission item 1 (TAKEOFF) after 3 attempts")
+                        logger.error(f"   This indicates mission may not be in drone memory")
+                        logger.error(f"   Continuing anyway, but AUTO mode may fail with 'Missing Takeoff Cmd'")
+                        # Don't return False - let it continue, user can decide
+                    
+                    logger.info(f"✅ Mission uploaded and verified successfully to Drone {self.drone_id}")
+                    logger.info(f"   Mission structure: {len(full_mission)} waypoints (seq 0=HOME, seq 1=TAKEOFF)")
+                    return True
+                else:
+                    logger.error(f"❌ Mission upload failed - no ACK received")
                     return False
             
-            # Wait for mission ACK
-            msg = self.master.recv_match(type='MISSION_ACK', blocking=True, timeout=5)
-            if msg and msg.type == mavutil.mavlink.MAV_MISSION_ACCEPTED:
-                logger.info(f" Mission uploaded successfully to Drone {self.drone_id}")
-                return True
-            else:
-                logger.error(f"Mission upload failed or not acknowledged")
+            except Exception as e:
+                logger.error(f"Error during mission upload: {e}")
                 return False
+            
+            finally:
+                # CRITICAL: Resume telemetry loop after upload completes
+                logger.info(f"▶️  Resuming telemetry loop...")
+                self.uploading_mission = False
                 
         except Exception as e:
             logger.error(f"Failed to upload mission to Drone {self.drone_id}: {e}")
+            # Ensure telemetry resumes even on outer exception
+            self.uploading_mission = False
             return False
     
     def start_mission(self):
@@ -882,21 +1471,27 @@ class DroneConnection:
                     return {'success': False, 'error': 'Failed to set GUIDED mode. Check drone status.'}
                 time.sleep(0.5)
             
-            # CRITICAL: Set current mission item to 0 BEFORE switching to AUTO mode
-            logger.info(f" Setting mission start waypoint to 0...")
+            # Mission was already verified during upload (mission item 1 = TAKEOFF confirmed)
+            logger.info(f"✅ Mission already verified during upload - proceeding to AUTO mode")
+            
+            # Set current mission item to 1 BEFORE switching to AUTO mode
+            # Mission Planner format: seq 0=HOME, seq 1=TAKEOFF
+            logger.info(f"📌 Setting mission to start at waypoint 1 (TAKEOFF, seq 0=HOME)...")
             self.master.mav.mission_set_current_send(
                 self.master.target_system,
                 self.master.target_component,
-                0  # Start from waypoint 0 (TAKEOFF)
+                1  # Start from waypoint 1 (TAKEOFF in Mission Planner format)
             )
-            time.sleep(0.5)
+            time.sleep(0.3)
             
-            # Verify mission set_current was accepted
+            # Verify mission_set_current was accepted
             msg = self.master.recv_match(type='MISSION_CURRENT', blocking=True, timeout=2.0)
-            if msg and msg.seq == 0:
-                logger.info(f"✅ Mission current waypoint set to 0")
+            if msg and msg.seq == 1:
+                logger.info(f"✅ Mission current waypoint confirmed at index 1 (TAKEOFF)")
             else:
-                logger.warning(f"⚠️ Could not confirm current waypoint set to 0")
+                logger.warning(f"⚠️ Could not confirm current waypoint set to 1, drone may start from different waypoint")
+                if msg:
+                    logger.warning(f"   Drone reports current waypoint: {msg.seq} (expected 1=TAKEOFF)")
             
             # Try to set AUTO mode
             logger.info(f" Setting AUTO mode to start mission for Drone {self.drone_id}...")
@@ -967,6 +1562,29 @@ class DroneConnection:
             
             if not mission_confirmed:
                 logger.warning(f"⚠️ Could not confirm MISSION_CURRENT")
+            
+            # CRITICAL FIX: Send MAV_CMD_MISSION_START to explicitly trigger mission execution
+            # ArduCopter won't auto-execute TAKEOFF in AUTO mode without this command
+            logger.info(f"🚀 Sending MAV_CMD_MISSION_START to trigger takeoff...")
+            self.master.mav.command_long_send(
+                self.master.target_system,
+                self.master.target_component,
+                mavutil.mavlink.MAV_CMD_MISSION_START,
+                0,  # confirmation
+                0,  # param1: first mission item (0 uses current)
+                0,  # param2: last mission item (0 = all)
+                0, 0, 0, 0, 0  # unused params
+            )
+            
+            # Wait for acknowledgment
+            ack = self.master.recv_match(type='COMMAND_ACK', blocking=True, timeout=2.0)
+            if ack and ack.command == mavutil.mavlink.MAV_CMD_MISSION_START:
+                if ack.result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
+                    logger.info(f"✅ MAV_CMD_MISSION_START accepted - mission execution triggered!")
+                else:
+                    logger.warning(f"⚠️ MAV_CMD_MISSION_START rejected: {ack.result}")
+            else:
+                logger.warning(f"⚠️ No ACK for MAV_CMD_MISSION_START (mission may still execute)")
             
             # Mark mission as active only if AUTO mode confirmed
             self.mission_active = True
@@ -1463,27 +2081,57 @@ def upload_mission(drone_id):
             return jsonify({
                 'success': True,
                 'command': 'mission_upload',
+                'drone_id': drone_id,
                 'waypoint_count': len(waypoints),
-                'message': f'Successfully uploaded {len(waypoints)} waypoints',
-                'drone_mode': drone_telem.get('flight_mode', 'UNKNOWN')
+                'telemetry': drone_telem
+            })
+        else:
+            return jsonify({'success': False, 'error': 'Mission upload failed', 'telemetry': drone_telem}), 500
+    except Exception as e:
+        logger.error(f"Mission upload exception: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/drone/<int:drone_id>/mission/upload_waypoints_file', methods=['POST'])
+def upload_waypoints_file(drone_id):
+    """Upload mission from Mission Planner .waypoints file"""
+    if drone_id not in drones or not drones[drone_id].connected:
+        return jsonify({
+            'success': False,
+            'error': 'Drone not connected',
+            'drone_id': drone_id
+        }), 404
+    
+    data = request.json
+    waypoints_content = data.get('waypoints_file_content', '')
+    
+    if not waypoints_content:
+        return jsonify({
+            'success': False,
+            'error': 'No .waypoints file content provided'
+        }), 400
+    
+    try:
+        success = drones[drone_id].upload_waypoints_file(waypoints_content)
+        drone_telem = drones[drone_id].telemetry
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'command': 'upload_waypoints_file',
+                'drone_id': drone_id,
+                'message': 'Mission from .waypoints file uploaded successfully',
+                'telemetry': drone_telem
             })
         else:
             return jsonify({
                 'success': False,
-                'error': 'Mission upload failed - check drone connection',
-                'command': 'mission_upload',
-                'waypoint_count': len(waypoints),
-                'drone_mode': drone_telem.get('flight_mode', 'UNKNOWN'),
-                'armed': drone_telem.get('armed', False)
-            }), 400
+                'error': 'Waypoints file upload failed',
+                'telemetry': drone_telem
+            }), 500
     except Exception as e:
-        logger.error(f"Mission upload exception: {e}")
-        return jsonify({
-            'success': False,
-            'error': f'Mission upload exception: {str(e)}',
-            'command': 'mission_upload',
-            'waypoint_count': len(waypoints)
-        }), 500
+        logger.error(f"Waypoints file upload exception: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/drone/<int:drone_id>/mission/start', methods=['POST'])
