@@ -398,23 +398,27 @@ class DroneConnection:
             # Check pre-arm conditions
             gps_fix = self.telemetry.get('gps_fix_type', 0)
             satellites = self.telemetry.get('satellites_visible', 0)
+            hdop = self.telemetry.get('hdop', 99.99)
             battery_voltage = self.telemetry.get('battery_voltage', 0)
             flight_mode = self.telemetry.get('flight_mode', '')
             
             # Log pre-arm status
-            logger.info(f"Pre-arm check: GPS={gps_fix} ({satellites} sats), Battery={battery_voltage:.1f}V, Mode={flight_mode}")
+            logger.info(f"Pre-arm check: GPS={gps_fix} ({satellites} sats), HDOP={hdop:.2f}, Battery={battery_voltage:.1f}V, Mode={flight_mode}")
             
             # Build warning messages
             warnings = []
             if gps_fix < 3:
                 warnings.append(f"GPS fix quality low ({gps_fix}). Need 3D fix (type 3)")
-                logger.warning(f"  GPS fix quality low ({gps_fix}). Need 3D fix (type 3)")
+                logger.warning(f"⚠️ GPS fix quality low ({gps_fix}). Need 3D fix (type 3)")
+            if hdop > 2.0:
+                warnings.append(f"HDOP too high ({hdop:.2f}). ArduPilot requires < 2.0 for AUTO mode")
+                logger.warning(f"⚠️ HDOP too high ({hdop:.2f}). ArduPilot requires < 2.0 for AUTO mode")
             if satellites < 8:
                 warnings.append(f"Low satellite count ({satellites}). Recommended: 8+")
-                logger.warning(f"  Low satellite count ({satellites}). Recommended: 8+")
+                logger.warning(f"⚠️ Low satellite count ({satellites}). Recommended: 8+")
             if battery_voltage < 11.0:
                 warnings.append(f"Low battery voltage ({battery_voltage:.1f}V)")
-                logger.warning(f"  Low battery voltage ({battery_voltage:.1f}V)")
+                logger.warning(f"⚠️ Low battery voltage ({battery_voltage:.1f}V)")
             
             for attempt in range(3):
                 self.master.arducopter_arm()
@@ -451,11 +455,11 @@ class DroneConnection:
                 statustext_msgs = [entry['text'] for entry in recent_statustext]
                 error_msg += ". Autopilot: " + "; ".join(statustext_msgs)
             
-            logger.error(f" Failed to ARM Drone {self.drone_id}")
-            logger.error(f"   GPS: {gps_fix} fix, {satellites} satellites")
+            logger.error(f"❌ Failed to ARM Drone {self.drone_id}")
+            logger.error(f"   GPS: {gps_fix} fix, {satellites} satellites, HDOP: {hdop:.2f}")
             logger.error(f"   Battery: {battery_voltage:.1f}V")
             logger.error(f"   Mode: {flight_mode}")
-            logger.error(f"   Common causes: Bad GPS, low battery, wrong mode, safety switch, compass cal")
+            logger.error(f"   Common causes: Bad GPS, HIGH HDOP, low battery, wrong mode, safety switch, compass cal")
             if recent_statustext:
                 for entry in recent_statustext:
                     logger.error(f"   STATUSTEXT [{entry['severity']}]: {entry['text']}")
@@ -765,6 +769,12 @@ class DroneConnection:
                     lon = wp.get('longitude', wp.get('lon', 0))
                     alt = wp.get('altitude', wp.get('alt', 0))
                     
+                    # Get waypoint parameters (with ArduPilot-compliant defaults)
+                    delay = wp.get('delay', 0)  # Hold time at waypoint
+                    acceptance_radius = wp.get('acceptance_radius', 0)  # 0 = use WPNAV_RADIUS parameter
+                    pass_radius = wp.get('pass_radius', 0)  # For corner cutting behavior
+                    yaw_angle = wp.get('yaw', 0)  # Target yaw angle
+                    
                     # Use mission_item_int_send for MAVLink 2 (lat/lon as integers)
                     self.master.mav.mission_item_int_send(
                         self.master.target_system,
@@ -774,10 +784,10 @@ class DroneConnection:
                         cmd,  # Use appropriate command
                         0,  # current (0=not current, 1=current waypoint)
                         1,  # autocontinue
-                        0,  # param1 (hold time for waypoint, min pitch for takeoff)
-                        0,  # param2 (acceptance radius)
-                        0,  # param3 (pass through)
-                        0,  # param4 (yaw)
+                        delay,  # param1 (hold time for waypoint, min pitch for takeoff)
+                        acceptance_radius,  # param2 (0 = use WPNAV_RADIUS from autopilot)
+                        pass_radius,  # param3 (pass through waypoint for S-curve navigation)
+                        yaw_angle,  # param4 (yaw angle in degrees, NaN for unchanged)
                         int(lat * 1e7),  # x: latitude in degrees * 1E7
                         int(lon * 1e7),  # y: longitude in degrees * 1E7
                         alt,             # z: altitude in meters
@@ -824,15 +834,51 @@ class DroneConnection:
                 return {'success': True, 'message': f'Mission started (simulated) - {len(self.mission_waypoints)} waypoints'}
             
             current_mode = self.telemetry.get('flight_mode', '').upper()
-            logger.info(f" Current mode: {current_mode}")
+            logger.info(f"📋 Current mode: {current_mode}")
+            
+            # ========== PRE-AUTO MODE VALIDATION ==========
+            # ArduPilot requires these conditions for AUTO mode:
+            logger.info(f"🔍 Validating pre-AUTO mode conditions...")
+            
+            # 1. GPS Quality Check
+            gps_fix = self.telemetry.get('gps_fix_type', 0)
+            hdop = self.telemetry.get('hdop', 99.99)
+            satellites = self.telemetry.get('satellites_visible', 0)
+            
+            pre_auto_errors = []
+            if gps_fix < 3:
+                pre_auto_errors.append(f"GPS fix type insufficient ({gps_fix}). Need 3D fix (3)")
+            if hdop > 2.0:
+                pre_auto_errors.append(f"HDOP too high ({hdop:.2f}). AUTO requires < 2.0")
+            if satellites < 8:
+                logger.warning(f"⚠️ Low satellite count ({satellites}), but continuing...")
+            
+            # 2. Battery Check
+            battery_voltage = self.telemetry.get('battery_voltage', 0)
+            if battery_voltage < 10.5:
+                pre_auto_errors.append(f"Battery too low ({battery_voltage:.1f}V) for mission")
+            
+            # 3. Position Check (Home should be set)
+            home_lat = self.telemetry.get('latitude', 0)
+            home_lon = self.telemetry.get('longitude', 0)
+            if home_lat == 0 and home_lon == 0:
+                pre_auto_errors.append("Home position not set (GPS not locked when armed?)")
+            
+            if pre_auto_errors:
+                error_msg = "❌ AUTO mode pre-flight checks FAILED:\n" + "\n".join([f"   • {e}" for e in pre_auto_errors])
+                logger.error(error_msg)
+                logger.error("   Fix these issues before starting AUTO mode mission")
+                return {'success': False, 'error': error_msg}
+            
+            logger.info(f"✅ Pre-AUTO checks passed: GPS={gps_fix}, HDOP={hdop:.2f}, Sats={satellites}, Battery={battery_voltage:.1f}V")
             
             # Transition through GUIDED mode first if not already there
             # ArduCopter safety: can't go directly from STABILIZE to AUTO
             if 'GUIDED' not in current_mode:
-                logger.info(f" Transitioning to GUIDED mode (prerequisite for AUTO)...")
+                logger.info(f"📡 Transitioning to GUIDED mode (prerequisite for AUTO)...")
                 guided_success = self.set_mode('GUIDED')
                 if not guided_success:
-                    logger.error(f"Failed to transition to GUIDED mode for Drone {self.drone_id}")
+                    logger.error(f"❌ Failed to transition to GUIDED mode for Drone {self.drone_id}")
                     return {'success': False, 'error': 'Failed to set GUIDED mode. Check drone status.'}
                 time.sleep(0.5)
             
