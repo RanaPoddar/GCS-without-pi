@@ -313,6 +313,16 @@ class MissionControl {
             this.handleDetectionStats(data);
         });
         
+        // Periodic image metadata (from MAVLink when out of WiFi range)
+        this.socket.on('periodic_image_metadata', (data) => {
+            this.handlePeriodicImageMetadata(data);
+        });
+        
+        // Pi connection test response
+        this.socket.on('pi_connection_test_result', (data) => {
+            this.handlePiConnectionTestResult(data);
+        });
+        
         // Mission status updates
         this.socket.on('mission_status', (data) => {
             this.handleMissionStatus(data);
@@ -384,6 +394,11 @@ class MissionControl {
         
         document.getElementById('returnToHome').addEventListener('click', () => {
             this.returnToHome();
+        });
+        
+        // Pi Connection Test Button
+        document.getElementById('testPiConnection').addEventListener('click', () => {
+            this.testPiConnection();
         });
         
         // Detection Control Buttons
@@ -959,6 +974,77 @@ class MissionControl {
         }
     }
     
+    // Pi Connection Test
+    testPiConnection() {
+        console.log('Testing Pi telemetry connection...');
+        
+        const statusEl = document.getElementById('piConnectionStatus');
+        const testBtn = document.getElementById('testPiConnection');
+        
+        // Update UI
+        statusEl.textContent = 'Testing...';
+        statusEl.style.color = '#fbbf24';
+        testBtn.disabled = true;
+        
+        // Set timeout in case Pi doesn't respond
+        const timeout = setTimeout(() => {
+            statusEl.textContent = 'No Response (Timeout)';
+            statusEl.style.color = '#ef4444';
+            testBtn.disabled = false;
+            this.addAlert('❌ Pi connection test failed: No response', 'error');
+        }, 5000);
+        
+        // Store timeout ID for cleanup
+        this.piTestTimeout = timeout;
+        
+        // Send test request to Pi
+        this.socket.emit('test_pi_connection', {
+            timestamp: Date.now(),
+            test_id: Math.random().toString(36).substr(2, 9)
+        });
+        
+        this.addAlert('📡 Testing Pi telemetry connection...', 'info');
+    }
+    
+    handlePiConnectionTestResult(data) {
+        // Clear timeout
+        if (this.piTestTimeout) {
+            clearTimeout(this.piTestTimeout);
+            this.piTestTimeout = null;
+        }
+        
+        const statusEl = document.getElementById('piConnectionStatus');
+        const testBtn = document.getElementById('testPiConnection');
+        
+        if (data.status === 'ok') {
+            const latency = data.latency ? `${data.latency}ms` : 'N/A';
+            statusEl.textContent = `✅ Connected (${latency})`;
+            statusEl.style.color = '#10b981';
+            
+            // Show detailed info
+            let detailMsg = `✅ Pi Connected Successfully\n\n`;
+            detailMsg += `Pi ID: ${data.pi_id}\n`;
+            detailMsg += `Latency: ${latency}\n`;
+            if (data.pixhawk_connected !== undefined) {
+                detailMsg += `Pixhawk: ${data.pixhawk_connected ? '✅ Connected' : '❌ Disconnected'}\n`;
+            }
+            if (data.camera_enabled !== undefined) {
+                detailMsg += `Camera: ${data.camera_enabled ? '✅ Enabled' : '❌ Disabled'}\n`;
+            }
+            if (data.detection_enabled !== undefined) {
+                detailMsg += `Detection: ${data.detection_enabled ? '✅ Enabled' : '❌ Disabled'}\n`;
+            }
+            
+            this.addAlert(detailMsg, 'success');
+        } else {
+            statusEl.textContent = `❌ ${data.message || 'Failed'}`;
+            statusEl.style.color = '#ef4444';
+            this.addAlert(`❌ Pi connection test failed: ${data.message || 'Unknown error'}`, 'error');
+        }
+        
+        testBtn.disabled = false;
+    }
+    
     // Detection Control Methods
     startDetection(droneId) {
         console.log(`Starting detection for Drone ${droneId}`);
@@ -1050,6 +1136,37 @@ class MissionControl {
         }
     }
     
+    // Periodic Image Metadata Handler (MAVLink fallback)
+    handlePeriodicImageMetadata(data) {
+        console.log('📡 Periodic image metadata received (MAVLink):', data);
+        
+        // Show notification that image was captured via MAVLink
+        const source = data.source === 'mavlink' ? ' via Radio' : '';
+        this.addAlert(`📷 Image captured${source}: ${data.image_id} (stored on Pi)`, 'info');
+        
+        // Add marker on map where image was taken
+        if (data.latitude && data.longitude) {
+            const marker = L.circleMarker([data.latitude, data.longitude], {
+                radius: 3,
+                color: '#3b82f6',
+                fillColor: '#60a5fa',
+                fillOpacity: 0.5,
+                weight: 1
+            }).addTo(this.map);
+            
+            marker.bindPopup(`
+                <div style="color: #fff;">
+                    <strong>📷 Image Captured</strong><br>
+                    ID: ${data.image_id}<br>
+                    Type: ${data.image_type}<br>
+                    Source: ${data.source === 'mavlink' ? 'MAVLink Radio' : 'WiFi'}<br>
+                    Status: Stored on Pi<br>
+                    Time: ${new Date(data.timestamp).toLocaleTimeString()}
+                </div>
+            `);
+        }
+    }
+    
     // Detection Handler
     handleDetection(data) {
         if (data.latitude && data.longitude) {
@@ -1062,12 +1179,15 @@ class MissionControl {
                 fillOpacity: 0.8
             }).addTo(this.map);
             
+            // Show transmission method in popup if available
+            const transmissionInfo = data.transmission_method ? `<br>Via: ${data.transmission_method}` : '';
+            
             marker.bindPopup(`
                 <div style="color: #fff;">
                     <strong>Detection</strong><br>
                     Type: ${data.type === 'manual' ? 'Manual (Test)' : 'Automatic'}<br>
                     Confidence: ${(data.confidence * 100).toFixed(1)}%<br>
-                    Time: ${new Date(data.timestamp).toLocaleTimeString()}
+                    Time: ${new Date(data.timestamp).toLocaleTimeString()}${transmissionInfo}
                 </div>
             `);
             

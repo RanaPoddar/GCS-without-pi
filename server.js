@@ -14,6 +14,7 @@ const logger = require('./config/logger');
 const pixhawkService = require('./services/pixhawkServicePyMAVLink');
 const missionService = require('./services/missionService');
 const waypointService = require('./services/waypointService');
+const MAVLinkMessageListener = require('./services/mavlinkMessageListener');
 
 // Import routes
 const droneRoutes = require('./routes/droneRoutes');
@@ -75,6 +76,10 @@ app.get('/flight-test', (req, res) => {
 // Setup Socket.IO handlers
 setupSocketHandlers(io);
 
+// Initialize MAVLink message listener for out-of-range detection/image transmission
+const mavlinkListener = new MAVLinkMessageListener(io);
+mavlinkListener.start();
+logger.info('📡 MAVLink message listener initialized for long-range data reception');
 
 // Initialize Pixhawk connections after a short delay
 setTimeout(() => {
@@ -86,6 +91,7 @@ setTimeout(() => {
 // Cleanup on shutdown
 process.on('SIGTERM', () => {
   logger.info('SIGTERM signal received: closing connections');
+  mavlinkListener.stop();
   pixhawkService.disconnectAll();
   server.close(() => {
     logger.info('HTTP server closed');
@@ -94,6 +100,7 @@ process.on('SIGTERM', () => {
 
 process.on('SIGINT', () => {
   logger.info('SIGINT signal received: closing connections');
+  mavlinkListener.stop();
   pixhawkService.disconnectAll();
   server.close(() => {
     logger.info('HTTP server closed');

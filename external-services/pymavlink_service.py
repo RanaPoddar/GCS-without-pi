@@ -1785,6 +1785,28 @@ def health():
     return jsonify({'status': 'ok', 'service': 'pymavlink'})
 
 
+@app.route('/messages/statustext', methods=['GET'])
+def get_statustext_messages():
+    """
+    Get recent STATUSTEXT messages from all drones
+    Used by MAVLink message listener to receive detection/image metadata
+    """
+    messages = []
+    
+    for drone_id, drone in drones.items():
+        if drone.connected and drone.statustext_log:
+            # Get last 10 STATUSTEXT messages from this drone
+            for entry in drone.statustext_log[-10:]:
+                messages.append({
+                    'drone_id': drone_id,
+                    'text': entry['text'],
+                    'severity': entry['severity'],
+                    'timestamp': entry['timestamp']
+                })
+    
+    return jsonify({'messages': messages})
+
+
 @app.route('/drones', methods=['GET'])
 def get_drones():
     """Get list of all drones and their status"""

@@ -185,6 +185,18 @@
                         Crop Detection
                     </h3>
                     
+                    <!-- Pi Connection Test -->
+                    <div class="connection-test-container" style="margin-bottom: 15px; padding: 10px; background: rgba(59, 130, 246, 0.1); border-radius: 8px;">
+                        <button class="btn btn-secondary" id="testPiConnection" style="width: 100%; margin-bottom: 8px;">
+                            <span class="btn-icon">📡</span>
+                            Test Pi Telemetry Connection
+                        </button>
+                        <div class="info-item" style="font-size: 0.85rem;">
+                            <span class="info-label">Pi Connection:</span>
+                            <span class="info-value" id="piConnectionStatus">Not Tested</span>
+                        </div>
+                    </div>
+                    
                     <div class="action-buttons">
                         <button class="btn btn-success" id="startDetection1" disabled>
                             <span class="btn-icon">▶️</span>
