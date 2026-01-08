@@ -299,7 +299,9 @@ class MissionControl {
         
         // Crop detection from Pi
         this.socket.on('crop_detection', (data) => {
-            console.log('Crop detection received:', data);
+            console.log('🌾 Crop detection received:', data);
+            console.log(`   Location: ${data.latitude}, ${data.longitude}`);
+            console.log(`   Confidence: ${data.confidence}`);
             this.handleDetection(data);
         });
         

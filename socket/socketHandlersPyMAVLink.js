@@ -81,6 +81,21 @@ function setupSocketHandlers(io) {
       io.emit('system_stats', data);
     });
     
+    // Drone telemetry from Pi (Pixhawk data)
+    socket.on('drone_telemetry', (data) => {
+      const piId = data.pi_id;
+      
+      // Update Pi info with telemetry
+      if (connectedPis.has(piId)) {
+        const pi = connectedPis.get(piId);
+        pi.telemetry = data.telemetry;
+        pi.last_telemetry_update = new Date().toISOString();
+      }
+      
+      // Broadcast to all clients (no logging - telemetry updates at 10Hz)
+      io.emit('drone_telemetry', data);
+    });
+    
     // Request stats from Pi
     socket.on('request_stats', (data) => {
       const piId = data.pi_id;
@@ -248,11 +263,22 @@ function setupSocketHandlers(io) {
     });
 
     socket.on('crop_detection', (data) => {
-      const droneId = data.drone_id || 1;
+      // Map pi_id to drone_id if needed
+      let droneId = data.drone_id;
+      if (!droneId && data.pi_id) {
+        droneId = data.pi_id === 'detection_drone_pi_pushpak' ? 1 : 2;
+        data.drone_id = droneId;
+      }
+      
+      logger.info(`🌾 Detection from Pi ${data.pi_id}: ${data.detection_id} at (${data.latitude}, ${data.longitude})`);
+      
       const detectionData = missionService.saveDetection(droneId, data);
       
       if (detectionData) {
         io.emit('crop_detection', detectionData);
+        logger.info(`   ✅ Detection broadcasted to all clients`);
+      } else {
+        logger.warn(`   ⚠️ Failed to save detection data`);
       }
     });
 
@@ -297,6 +323,25 @@ function setupSocketHandlers(io) {
     // ========================================
     //          Mission Management            |
     // ========================================
+    
+    // Mission started from Pi (auto-mission)
+    socket.on('mission_started', (data) => {
+      const droneId = data.drone_id || 1;
+      const missionData = missionService.initializeMission(droneId, {
+        mission_id: data.mission_id,
+        auto_started: data.auto_started || false
+      });
+      
+      logger.info(`🚀 Mission ${data.mission_id} started from Pi for Drone ${droneId}`);
+      
+      // Broadcast to all clients
+      io.emit('mission_started', {
+        mission_id: missionData.mission_id,
+        drone_id: droneId,
+        timestamp: missionData.start_time,
+        auto_started: data.auto_started
+      });
+    });
     
     socket.on('start_mission', async (data) => {
       const droneId = data.drone_id || 1;

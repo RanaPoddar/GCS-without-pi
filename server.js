@@ -57,11 +57,11 @@ waypointService.loadWaypoints();
 
 // Page Routes
 app.get('/', (req, res) => {
-  res.sendFile(path.join(config.PUBLIC_DIR, 'landing.html'));
+  res.sendFile(path.join(config.PUBLIC_DIR, 'index.html'));
 });
 
-app.get('/legacy', (req, res) => {
-  res.sendFile(path.join(config.PUBLIC_DIR, 'index.html'));
+app.get('/landing', (req, res) => {
+  res.sendFile(path.join(config.PUBLIC_DIR, 'landing.html'));
 });
 
 app.get('/mission-control', (req, res) => {
@@ -70,6 +70,32 @@ app.get('/mission-control', (req, res) => {
 
 app.get('/flight-test', (req, res) => {
   res.sendFile(path.join(config.PUBLIC_DIR, 'flight_test.html'));
+});
+
+// Video stream proxy - proxies MJPEG stream from Pi
+app.get('/stream', (req, res) => {
+  const piId = req.query.pi_id;
+  
+  if (!piId) {
+    return res.status(400).send('Missing pi_id parameter');
+  }
+  
+  // Get Pi's stream URL from connected Pis (this would be stored during Pi registration)
+  // For now, assume Pi is running on port 8080
+  const streamUrl = `http://${piId}:8080/stream`;
+  
+  // Set headers for MJPEG streaming
+  res.setHeader('Content-Type', 'multipart/x-mixed-replace; boundary=frame');
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  
+  // Proxy the stream (simple implementation)
+  // In production, you'd use http.request or a library like http-proxy
+  logger.info(`Proxying stream from ${piId}`);
+  
+  // For now, just send a placeholder response
+  res.status(503).send('Stream not available - Pi streaming service not configured');
 });
 
 // Setup Socket.IO handlers
