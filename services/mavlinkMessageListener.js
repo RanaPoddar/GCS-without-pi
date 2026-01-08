@@ -94,6 +94,7 @@ class MAVLinkMessageListener {
    * - DET|ID|LAT|LON|CONF|AREA - Detection event
    * - IMG|ID|LAT|LON|TYPE|MISSION - Image metadata
    * - DSTAT|TOTAL|ACTIVE|MISSION - Detection statistics
+   * - STAT|CPU|MEM|DISK|TEMP - System statistics
    */
   parseMessage(text, droneId) {
     try {
@@ -158,6 +159,30 @@ class MAVLinkMessageListener {
           
           this.io.emit('detection_stats', stats);
           logger.debug(`📡 MAVLink Detection stats from Drone ${droneId}: ${stats.total_detections} total`);
+        }
+      }
+      
+      // System statistics: STAT|CPU|MEM|DISK|TEMP
+      else if (text.startsWith('STAT|')) {
+        const parts = text.split('|');
+        if (parts.length >= 5) {
+          const systemStats = {
+            cpu_usage: parseFloat(parts[1]),
+            memory_usage: parseFloat(parts[2]),
+            disk_usage: parseFloat(parts[3]),
+            cpu_temp: parseFloat(parts[4]),
+            pi_id: `detection_drone_pi_${droneId}`,
+            source: 'mavlink',
+            timestamp: new Date().toISOString(),
+            transmission_method: 'MAVLink Radio'
+          };
+          
+          // Emit to dashboard
+          this.io.emit('system_stats', {
+            pi_id: systemStats.pi_id,
+            stats: systemStats
+          });
+          logger.info(`📡 MAVLink System stats from Drone ${droneId}: CPU ${systemStats.cpu_usage.toFixed(1)}% MEM ${systemStats.memory_usage.toFixed(1)}% TEMP ${systemStats.cpu_temp.toFixed(1)}°C`);
         }
       }
       

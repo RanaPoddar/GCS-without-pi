@@ -714,6 +714,10 @@
                         <span class="badge online" id="piStatus">Online</span>
                     </div>
                     <div class="pi-info-item">
+                        <span>Data Source:</span>
+                        <span class="badge" id="statsDataSource" style="background: #6b7280;">Unknown</span>
+                    </div>
+                    <div class="pi-info-item">
                         <span>Last Update:</span>
                         <span id="lastUpdate">-</span>
                     </div>
@@ -767,6 +771,17 @@
                 <select class="pi-selector" id="controlPiSelect">
                     <option value="">Select a Raspberry Pi...</option>
                 </select>
+
+                <!-- Pi Connection Test -->
+                <div style="margin: 15px 0; padding: 12px; background: rgba(59, 130, 246, 0.1); border-radius: 8px; border: 1px solid rgba(59, 130, 246, 0.3);">
+                    <button class="btn-primary" onclick="testPiConnection()" style="width: 100%; margin-bottom: 8px;">
+                        📡 Test Pi Connection
+                    </button>
+                    <div style="font-size: 0.85rem; display: flex; justify-content: space-between; align-items: center;">
+                        <span style="color: #666;">Connection Status:</span>
+                        <span id="piConnectionTestStatus" style="font-weight: 600; color: #999;">Not Tested</span>
+                    </div>
+                </div>
 
                 <div class="controls">
                     <button class="btn-warning" onclick="sendCommand('reboot')">🔄 Reboot</button>
@@ -1403,6 +1418,18 @@
                 document.getElementById('lastUpdate').textContent = date.toLocaleTimeString();
             }
 
+            // Update data source indicator
+            const sourceEl = document.getElementById('statsDataSource');
+            if (stats.source === 'mavlink' || stats.transmission_method === 'MAVLink Radio') {
+                sourceEl.textContent = '📡 MAVLink (Long-Range)';
+                sourceEl.style.background = '#f59e0b'; // Orange for MAVLink
+                sourceEl.style.color = '#fff';
+            } else {
+                sourceEl.textContent = '📶 WiFi (Direct)';
+                sourceEl.style.background = '#10b981'; // Green for WiFi
+                sourceEl.style.color = '#fff';
+            }
+
             // Show pi info
             document.getElementById('piInfo').style.display = 'block';
         }
@@ -1568,6 +1595,49 @@
             }
         });
 
+        // Connection test result handler
+        socket.on('pi_connection_test_result', (data) => {
+            // Clear timeout
+            if (piTestTimeout) {
+                clearTimeout(piTestTimeout);
+                piTestTimeout = null;
+            }
+            
+            const statusEl = document.getElementById('piConnectionTestStatus');
+            
+            if (data.success) {
+                statusEl.textContent = '✅ Connected';
+                statusEl.style.color = '#10b981';
+                
+                // Build detailed status message
+                let details = `Pi Connection Test - ${data.pi_id}\n\n`;
+                details += `✅ Round-trip latency: ${data.latency_ms}ms\n\n`;
+                
+                if (data.system_info) {
+                    const sys = data.system_info;
+                    details += `System Status:\n`;
+                    details += `• Pixhawk: ${sys.pixhawk_connected ? '✅ Connected' : '❌ Disconnected'}\n`;
+                    details += `• Camera: ${sys.camera_available ? '✅ Available' : '❌ Unavailable'}\n`;
+                    details += `• Detection: ${sys.detection_running ? '✅ Running' : '⏸️ Stopped'}\n`;
+                    details += `• CPU: ${sys.cpu_percent}%\n`;
+                    details += `• Memory: ${sys.memory_percent}%\n`;
+                    details += `• Disk: ${sys.disk_percent}%\n\n`;
+                    
+                    if (sys.telemetry_mode) {
+                        details += `Telemetry Mode: ${sys.telemetry_mode}\n`;
+                    }
+                }
+                
+                alert(details);
+                addLog(`Connection test successful: ${data.pi_id} (${data.latency_ms}ms)`, 'success');
+            } else {
+                statusEl.textContent = '❌ Failed';
+                statusEl.style.color = '#ef4444';
+                alert(`Connection test failed: ${data.error || 'Unknown error'}`);
+                addLog(`Connection test failed: ${data.error || 'Unknown error'}`, 'error');
+            }
+        });
+
         // Control functions
         function startStream() {
             const piId = document.getElementById('videoStreamPiSelect').value;
@@ -1653,6 +1723,40 @@
             });
             
             addLog(`Sent command '${command}' to ${piId}`, 'info');
+        }
+
+        // Pi Connection Test
+        let piTestTimeout = null;
+        
+        function testPiConnection() {
+            const piId = document.getElementById('controlPiSelect').value;
+            if (!piId) {
+                alert('Please select a Raspberry Pi first');
+                return;
+            }
+            
+            const statusEl = document.getElementById('piConnectionTestStatus');
+            
+            // Update UI
+            statusEl.textContent = 'Testing...';
+            statusEl.style.color = '#fbbf24';
+            
+            // Set timeout in case Pi doesn't respond
+            if (piTestTimeout) clearTimeout(piTestTimeout);
+            piTestTimeout = setTimeout(() => {
+                statusEl.textContent = '❌ Timeout';
+                statusEl.style.color = '#ef4444';
+                addLog(`Connection test to ${piId} timed out (no response)`, 'error');
+            }, 5000);
+            
+            // Send test request
+            socket.emit('test_pi_connection', {
+                pi_id: piId,
+                timestamp: Date.now(),
+                test_id: Math.random().toString(36).substr(2, 9)
+            });
+            
+            addLog(`Testing connection to ${piId}...`, 'info');
         }
 
         function clearLog() {
