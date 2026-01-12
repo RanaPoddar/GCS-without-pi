@@ -2,6 +2,7 @@ const logger = require('../config/logger');
 const pixhawkService = require('../services/pixhawkServicePyMAVLink');
 const missionService = require('../services/missionService');
 const waypointService = require('../services/waypointService');
+const sprayerService = require('../services/sprayerService');
 
 // Track connected Raspberry Pis
 const connectedPis = new Map();
@@ -10,6 +11,31 @@ const connectedPis = new Map();
  * Setup all Socket.IO event handlers for PyMAVLink
  */
 function setupSocketHandlers(io) {
+  // Setup sprayer service event forwarding
+  sprayerService.on('targets_queued', (data) => {
+    io.emit('spray_targets_queued', data);
+  });
+  
+  sprayerService.on('mission_started', (data) => {
+    io.emit('spray_mission_started', data);
+  });
+  
+  sprayerService.on('next_target', (data) => {
+    io.emit('spray_next_target', data);
+  });
+  
+  sprayerService.on('refill_required', (data) => {
+    io.emit('spray_refill_required', data);
+  });
+  
+  sprayerService.on('refill_complete', (data) => {
+    io.emit('spray_refill_complete', data);
+  });
+  
+  sprayerService.on('mission_complete', (data) => {
+    io.emit('spray_mission_complete', data);
+  });
+  
   io.on('connection', (socket) => {
     logger.info(`Client connected: ${socket.id}`);
     
@@ -455,6 +481,65 @@ function setupSocketHandlers(io) {
     socket.on('request_drone_list', () => {
       const droneList = pixhawkService.getDroneStatusList();
       socket.emit('drones_status', { drones: droneList });
+    });
+    
+    // ========================================
+    //      Sprayer Mission Control           |
+    // ========================================
+    
+    // Queue spray targets
+    socket.on('spray_queue_targets', (data) => {
+      logger.info(`💧 Queueing spray targets for Drone ${data.drone_id}: ${data.detections.length} targets`);
+      const result = sprayerService.queueTargets(data.drone_id, data.detections);
+      socket.emit('spray_targets_queued', result);
+      io.emit('spray_queue_updated', {
+        drone_id: data.drone_id,
+        queue_length: result.total_queued
+      });
+    });
+    
+    // Start spray mission
+    socket.on('spray_start_mission', async (data) => {
+      logger.info(`🚁 Starting spray mission for Drone ${data.drone_id}`);
+      const result = await sprayerService.startSprayMission(data.drone_id, io);
+      socket.emit('spray_mission_started', result);
+    });
+    
+    // Stop spray mission
+    socket.on('spray_stop_mission', (data) => {
+      logger.info(`⏹️ Stopping spray mission for Drone ${data.drone_id}`);
+      const result = sprayerService.stopMission(data.drone_id, io);
+      socket.emit('spray_mission_stopped', result);
+    });
+    
+    // Confirm refill complete
+    socket.on('spray_refill_complete', (data) => {
+      logger.info(`✅ Refill confirmed for Drone ${data.drone_id}`);
+      const result = sprayerService.confirmRefill(data.drone_id, io);
+      socket.emit('spray_refill_confirmed', result);
+    });
+    
+    // Request spray status
+    socket.on('spray_request_status', (data) => {
+      const status = sprayerService.getMissionStatus(data.drone_id);
+      socket.emit('spray_status_update', status);
+    });
+    
+    // Request tank status
+    socket.on('spray_request_tank_status', (data) => {
+      const tankStatus = sprayerService.getTankStatus(data.drone_id);
+      socket.emit('spray_tank_status', tankStatus);
+    });
+    
+    // Clear spray queue
+    socket.on('spray_clear_queue', (data) => {
+      logger.info(`🗑️ Clearing spray queue for Drone ${data.drone_id}`);
+      const result = sprayerService.clearQueue(data.drone_id);
+      socket.emit('spray_queue_cleared', result);
+      io.emit('spray_queue_updated', {
+        drone_id: data.drone_id,
+        queue_length: 0
+      });
     });
     
     // Handle disconnection

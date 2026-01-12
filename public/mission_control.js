@@ -319,6 +319,53 @@ class MissionControl {
         this.socket.on('mission_status', (data) => {
             this.handleMissionStatus(data);
         });
+        
+        // Spray control events
+        this.socket.on('spray_targets_queued', (data) => {
+            this.handleSprayTargetsQueued(data);
+        });
+        
+        this.socket.on('spray_mission_started', (data) => {
+            this.handleSprayMissionStarted(data);
+        });
+        
+        this.socket.on('spray_next_target', (data) => {
+            this.handleSprayNextTarget(data);
+        });
+        
+        this.socket.on('spray_target_complete', (data) => {
+            this.handleSprayTargetComplete(data);
+        });
+        
+        this.socket.on('spray_refill_required', (data) => {
+            this.handleSprayRefillRequired(data);
+        });
+        
+        this.socket.on('spray_refill_complete', (data) => {
+            this.handleSprayRefillComplete(data);
+        });
+        
+        this.socket.on('spray_mission_complete', (data) => {
+            this.handleSprayMissionComplete(data);
+        });
+        
+        this.socket.on('spray_mission_stopped', (data) => {
+            this.handleSprayMissionStopped(data);
+        });
+        
+        this.socket.on('spray_tank_status', (data) => {
+            if (data) {
+                this.tankStatus = data;
+                this.updateTankDisplay();
+            }
+        });
+        
+        this.socket.on('spray_queue_updated', (data) => {
+            document.getElementById('sprayQueueCount').textContent = data.queue_length || 0;
+        });
+        
+        // Initialize spray control
+        this.initSprayControl();
     }
     
     // Event Listeners
@@ -473,6 +520,27 @@ class MissionControl {
 
         document.getElementById('exportLog').addEventListener('click', () => {
             this.exportDetectionLog();
+        });
+        
+        // Spray Control Event Listeners
+        document.getElementById('queueDetectionsForSpray').addEventListener('click', () => {
+            this.queueDetectionsForSpray();
+        });
+        
+        document.getElementById('startSprayMission').addEventListener('click', () => {
+            this.startSprayMission();
+        });
+        
+        document.getElementById('stopSprayMission').addEventListener('click', () => {
+            this.stopSprayMission();
+        });
+        
+        document.getElementById('clearSprayQueue').addEventListener('click', () => {
+            this.clearSprayQueue();
+        });
+        
+        document.getElementById('confirmRefill').addEventListener('click', () => {
+            this.confirmRefill();
         });
         
         // System console controls
@@ -2180,6 +2248,292 @@ class MissionControl {
         
         URL.revokeObjectURL(url);
         this.addAlert(`Exported ${this.detectionLog.length} detections`, 'success');
+    }
+
+    // ========================================
+    //      SPRAYER CONTROL METHODS
+    // ========================================
+
+    /**
+     * Initialize spray control
+     */
+    initSprayControl() {
+        this.sprayDroneId = 2; // Drone 2 is the sprayer
+        this.sprayTargetMarkers = [];
+        this.sprayQueueData = [];
+        this.tankStatus = {
+            current_volume_ml: 1000,
+            capacity_ml: 1000,
+            refills_count: 0
+        };
+        
+        // Update tank display
+        this.updateTankDisplay();
+        
+        // Request initial status
+        this.socket.emit('spray_request_status', { drone_id: this.sprayDroneId });
+        this.socket.emit('spray_request_tank_status', { drone_id: this.sprayDroneId });
+    }
+
+    /**
+     * Queue all detections for spraying
+     */
+    queueDetectionsForSpray() {
+        if (this.detectionLog.length === 0) {
+            alert('No detections to queue for spraying');
+            return;
+        }
+        
+        const detections = this.detectionLog.map(det => ({
+            detection_id: det.detection_id,
+            latitude: det.latitude,
+            longitude: det.longitude,
+            altitude: 5, // 5m spray altitude
+            confidence: det.confidence
+        }));
+        
+        this.socket.emit('spray_queue_targets', {
+            drone_id: this.sprayDroneId,
+            detections: detections
+        });
+        
+        this.addAlert(`Queuing ${detections.length} targets for spraying`, 'info');
+    }
+
+    /**
+     * Start spray mission
+     */
+    startSprayMission() {
+        if (confirm('Start automated spray mission?')) {
+            this.socket.emit('spray_start_mission', {
+                drone_id: this.sprayDroneId
+            });
+            
+            document.getElementById('startSprayMission').disabled = true;
+            document.getElementById('stopSprayMission').disabled = false;
+            document.getElementById('sprayMissionStatus').classList.remove('hidden');
+        }
+    }
+
+    /**
+     * Stop spray mission
+     */
+    stopSprayMission() {
+        if (confirm('Stop spray mission?')) {
+            this.socket.emit('spray_stop_mission', {
+                drone_id: this.sprayDroneId
+            });
+            
+            document.getElementById('startSprayMission').disabled = false;
+            document.getElementById('stopSprayMission').disabled = true;
+        }
+    }
+
+    /**
+     * Clear spray queue
+     */
+    clearSprayQueue() {
+        if (confirm('Clear all queued spray targets?')) {
+            this.socket.emit('spray_clear_queue', {
+                drone_id: this.sprayDroneId
+            });
+            
+            this.addAlert('Spray queue cleared', 'info');
+        }
+    }
+
+    /**
+     * Confirm refill complete
+     */
+    confirmRefill() {
+        this.socket.emit('spray_refill_complete', {
+            drone_id: this.sprayDroneId
+        });
+        
+        document.getElementById('refillAlert').classList.add('hidden');
+        this.addAlert('Refill confirmed - resuming mission', 'success');
+    }
+
+    /**
+     * Update tank display
+     */
+    updateTankDisplay() {
+        const percent = (this.tankStatus.current_volume_ml / this.tankStatus.capacity_ml) * 100;
+        const targetsRemaining = Math.floor(this.tankStatus.current_volume_ml / 50); // 50ml per target
+        
+        const tankFill = document.getElementById('tankFill');
+        const tankVolume = document.getElementById('tankVolume');
+        const tankPercent = document.getElementById('tankPercent');
+        const targetsRemainingEl = document.getElementById('targetsRemaining');
+        
+        if (tankFill) {
+            tankFill.style.height = percent + '%';
+            
+            // Update color based on level
+            if (percent > 50) {
+                tankFill.setAttribute('data-level', 'high');
+            } else if (percent > 20) {
+                tankFill.setAttribute('data-level', 'medium');
+            } else {
+                tankFill.setAttribute('data-level', 'low');
+            }
+        }
+        
+        if (tankVolume) tankVolume.textContent = this.tankStatus.current_volume_ml;
+        if (tankPercent) tankPercent.textContent = percent.toFixed(0);
+        if (targetsRemainingEl) targetsRemainingEl.textContent = targetsRemaining;
+    }
+
+    /**
+     * Handle spray targets queued event
+     */
+    handleSprayTargetsQueued(data) {
+        console.log('Spray targets queued:', data);
+        document.getElementById('sprayQueueCount').textContent = data.total_queued || 0;
+        
+        // Enable start button if queue has targets
+        if (data.total_queued > 0) {
+            document.getElementById('startSprayMission').disabled = false;
+        }
+        
+        this.addAlert(`${data.targets_added} targets added to spray queue`, 'success');
+    }
+
+    /**
+     * Handle spray mission started
+     */
+    handleSprayMissionStarted(data) {
+        console.log('Spray mission started:', data);
+        document.getElementById('sprayStatus').textContent = 'Active';
+        document.getElementById('sprayMissionStatus').classList.remove('hidden');
+        this.addAlert(`Spray mission started: ${data.total_targets} targets`, 'success');
+    }
+
+    /**
+     * Handle spray next target
+     */
+    handleSprayNextTarget(data) {
+        console.log('Spray next target:', data);
+        const targetInfo = `Target ${data.target_index + 1}/${data.total_targets}`;
+        document.getElementById('sprayCurrentTarget').textContent = targetInfo;
+        
+        // Update tank volume
+        if (data.tank_volume !== undefined) {
+            this.tankStatus.current_volume_ml = data.tank_volume;
+            this.updateTankDisplay();
+        }
+        
+        // Mark target on map
+        if (data.target && data.target.latitude && data.target.longitude) {
+            const marker = L.circleMarker([data.target.latitude, data.target.longitude], {
+                radius: 8,
+                fillColor: '#0ea5e9',
+                color: '#fff',
+                weight: 2,
+                opacity: 1,
+                fillOpacity: 0.7
+            }).addTo(this.map);
+            
+            marker.bindPopup(`
+                <div style="color: #fff;">
+                    <strong>Spray Target ${data.target_index + 1}</strong><br>
+                    Status: In Progress
+                </div>
+            `);
+            
+            this.sprayTargetMarkers.push(marker);
+        }
+    }
+
+    /**
+     * Handle spray target complete
+     */
+    handleSprayTargetComplete(data) {
+        console.log('Spray target complete:', data);
+        document.getElementById('sprayCompleted').textContent = data.targets_completed || 0;
+        
+        // Update tank volume
+        if (data.tank_status) {
+            this.tankStatus = data.tank_status;
+            this.updateTankDisplay();
+        }
+        
+        // Update progress
+        const progress = (data.targets_completed / data.total_targets) * 100;
+        this.addAlert(`Spray target ${data.targets_completed}/${data.total_targets} complete`, 'success');
+    }
+
+    /**
+     * Handle refill required
+     */
+    handleSprayRefillRequired(data) {
+        console.log('Refill required:', data);
+        document.getElementById('sprayStatus').textContent = 'Refilling';
+        document.getElementById('refillAlert').classList.remove('hidden');
+        
+        // Update tank status
+        if (data.tank_status) {
+            this.tankStatus = data.tank_status;
+            this.updateTankDisplay();
+        }
+        
+        this.addAlert(`Refill required - ${data.targets_remaining} targets remaining`, 'warning');
+    }
+
+    /**
+     * Handle refill complete
+     */
+    handleSprayRefillComplete(data) {
+        console.log('Refill complete:', data);
+        document.getElementById('sprayStatus').textContent = 'Active';
+        document.getElementById('sprayRefills').textContent = data.tank_status.refills_count || 0;
+        
+        // Update tank status
+        if (data.tank_status) {
+            this.tankStatus = data.tank_status;
+            this.updateTankDisplay();
+        }
+        
+        this.addAlert('Refill complete - resuming mission', 'success');
+    }
+
+    /**
+     * Handle spray mission complete
+     */
+    handleSprayMissionComplete(data) {
+        console.log('Spray mission complete:', data);
+        document.getElementById('sprayStatus').textContent = 'Complete';
+        document.getElementById('startSprayMission').disabled = false;
+        document.getElementById('stopSprayMission').disabled = true;
+        
+        // Update tank status
+        if (data.tank_status) {
+            this.tankStatus = data.tank_status;
+            this.updateTankDisplay();
+        }
+        
+        this.addAlert(`Spray mission complete: ${data.targets_completed} targets sprayed, ${data.refills} refills`, 'success');
+        
+        // Clear spray target markers after delay
+        setTimeout(() => {
+            this.sprayTargetMarkers.forEach(marker => {
+                this.map.removeLayer(marker);
+            });
+            this.sprayTargetMarkers = [];
+        }, 5000);
+    }
+
+    /**
+     * Handle spray mission stopped
+     */
+    handleSprayMissionStopped(data) {
+        console.log('Spray mission stopped:', data);
+        document.getElementById('sprayStatus').textContent = 'Stopped';
+        document.getElementById('startSprayMission').disabled = false;
+        document.getElementById('stopSprayMission').disabled = true;
+        document.getElementById('sprayMissionStatus').classList.add('hidden');
+        
+        this.addAlert(`Spray mission stopped: ${data.targets_completed} targets completed`, 'warning');
     }
 }
 

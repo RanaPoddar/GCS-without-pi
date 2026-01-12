@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2" xmlns:kml="http://www.opengis.net/kml/2.2" xmlns:atom="http://www.w3.org/2005/Atom">
+<Document>
+	<name>Untitled layer</name>
+	<gx:CascadingStyle kml:id="__managed_style_2883A2F2AE3CE61858B4">
+		<Style>
+			<IconStyle>
+				<scale>1.2</scale>
+				<Icon>
+					<href>https://maps.google.com/mapfiles/kml/pushpin/ylw-pushpin.png</href>
+				</Icon>
+			</IconStyle>
+			<LabelStyle>
+			</LabelStyle>
+			<LineStyle>
+				<color>ff000000</color>
+				<width>2.7</width>
+			</LineStyle>
+			<PolyStyle>
+				<color>4d000000</color>
+			</PolyStyle>
+			<BalloonStyle>
+				<displayMode>hide</displayMode>
+			</BalloonStyle>
+		</Style>
+	</gx:CascadingStyle>
+	<gx:CascadingStyle kml:id="__managed_style_17560FA1243CE61858B4">
+		<Style>
+			<IconStyle>
+				<Icon>
+					<href>https://maps.google.com/mapfiles/kml/pushpin/ylw-pushpin.png</href>
+				</Icon>
+			</IconStyle>
+			<LabelStyle>
+			</LabelStyle>
+			<LineStyle>
+				<color>ff000000</color>
+				<width>1.8</width>
+			</LineStyle>
+			<PolyStyle>
+				<color>4d000000</color>
+			</PolyStyle>
+			<BalloonStyle>
+				<displayMode>hide</displayMode>
+			</BalloonStyle>
+		</Style>
+	</gx:CascadingStyle>
+	<StyleMap id="__managed_style_043F3B5AC23CE61858B4">
+		<Pair>
+			<key>normal</key>
+			<styleUrl>#__managed_style_17560FA1243CE61858B4</styleUrl>
+		</Pair>
+		<Pair>
+			<key>highlight</key>
+			<styleUrl>#__managed_style_2883A2F2AE3CE61858B4</styleUrl>
+		</Pair>
+	</StyleMap>
+	<Placemark id="06D79AF5283CE61858A8">
+		<name>Untitled polygon</name>
+		<LookAt>
+			<longitude>77.52648799472087</longitude>
+			<latitude>28.4223795830725</latitude>
+			<altitude>212.2832153732908</altitude>
+			<heading>0</heading>
+			<tilt>0</tilt>
+			<gx:fovy>30.00000000014805</gx:fovy>
+			<range>735.2850032093558</range>
+			<altitudeMode>absolute</altitudeMode>
+		</LookAt>
+		<styleUrl>#__managed_style_043F3B5AC23CE61858B4</styleUrl>
+		<Polygon>
+			<outerBoundaryIs>
+				<LinearRing>
+					<coordinates>
+						77.52622397633532,28.42311371441317,0 77.52593734698554,28.42214643370165,0 77.52606511411089,28.42197325466991,0 77.52624690452036,28.42188203920133,0 77.5264649108702,28.42191693964972,0 77.52660537917616,28.42202906137649,0 77.52686259029517,28.42295623191521,0 77.52622397633532,28.42311371441317,0 
+					</coordinates>
+				</LinearRing>
+			</outerBoundaryIs>
+		</Polygon>
+	</Placemark>
+</Document>
+</kml>

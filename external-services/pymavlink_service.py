@@ -2342,10 +2342,220 @@ def pi_request_stats(drone_id):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/drone/<int:drone_id>/spray/activate', methods=['POST'])
+def activate_spray(drone_id):
+    """Activate spray servo/relay"""
+    if drone_id not in drones or not drones[drone_id].connected:
+        return jsonify({'error': 'Drone not connected'}), 404
+    
+    try:
+        data = request.json or {}
+        duration_sec = data.get('duration_sec', 3)  # Default 3 seconds
+        servo_channel = data.get('servo_channel', 9)  # Default servo 9
+        pwm_value = data.get('pwm_value', 1900)  # Default PWM for ON
+        
+        logger.info(f"💧 Activating spray for Drone {drone_id}: {duration_sec}s on channel {servo_channel}")
+        
+        # Send servo command to activate spray
+        drones[drone_id].master.mav.command_long_send(
+            drones[drone_id].master.target_system,
+            drones[drone_id].master.target_component,
+            mavutil.mavlink.MAV_CMD_DO_SET_SERVO,
+            0,  # confirmation
+            servo_channel,  # param1: servo channel
+            pwm_value,      # param2: PWM value
+            0, 0, 0, 0, 0   # unused params
+        )
+        
+        return jsonify({
+            'success': True,
+            'drone_id': drone_id,
+            'command': 'spray_activate',
+            'duration_sec': duration_sec,
+            'servo_channel': servo_channel
+        })
+        
+    except Exception as e:
+        logger.error(f"Failed to activate spray: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/drone/<int:drone_id>/spray/deactivate', methods=['POST'])
+def deactivate_spray(drone_id):
+    """Deactivate spray servo/relay"""
+    if drone_id not in drones or not drones[drone_id].connected:
+        return jsonify({'error': 'Drone not connected'}), 404
+    
+    try:
+        data = request.json or {}
+        servo_channel = data.get('servo_channel', 9)
+        pwm_value = data.get('pwm_value', 1100)  # Default PWM for OFF
+        
+        logger.info(f"💧 Deactivating spray for Drone {drone_id} on channel {servo_channel}")
+        
+        # Send servo command to deactivate spray
+        drones[drone_id].master.mav.command_long_send(
+            drones[drone_id].master.target_system,
+            drones[drone_id].master.target_component,
+            mavutil.mavlink.MAV_CMD_DO_SET_SERVO,
+            0,  # confirmation
+            servo_channel,  # param1: servo channel
+            pwm_value,      # param2: PWM value
+            0, 0, 0, 0, 0   # unused params
+        )
+        
+        return jsonify({
+            'success': True,
+            'drone_id': drone_id,
+            'command': 'spray_deactivate',
+            'servo_channel': servo_channel
+        })
+        
+    except Exception as e:
+        logger.error(f"Failed to deactivate spray: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/drone/<int:drone_id>/spray/spray_at_target', methods=['POST'])
+def spray_at_target(drone_id):
+    """Navigate to target and perform spray operation"""
+    if drone_id not in drones or not drones[drone_id].connected:
+        return jsonify({'error': 'Drone not connected'}), 404
+    
+    try:
+        data = request.json
+        latitude = data.get('latitude')
+        longitude = data.get('longitude')
+        altitude = data.get('altitude', 5)  # Default 5m
+        loiter_sec = data.get('loiter_time_sec', 5)
+        spray_duration_sec = data.get('spray_duration_sec', 3)
+        
+        if not latitude or not longitude:
+            return jsonify({'error': 'Missing latitude or longitude'}), 400
+        
+        logger.info(f"🎯 Spray target for Drone {drone_id}: [{latitude}, {longitude}] @ {altitude}m")
+        
+        # Navigate to target
+        success = drones[drone_id].goto(latitude, longitude, altitude)
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'drone_id': drone_id,
+                'target': {
+                    'latitude': latitude,
+                    'longitude': longitude,
+                    'altitude': altitude
+                },
+                'loiter_time_sec': loiter_sec,
+                'spray_duration_sec': spray_duration_sec,
+                'status': 'navigating_to_target'
+            })
+        else:
+            return jsonify({'success': False, 'error': 'Navigation command failed'}), 500
+        
+    except Exception as e:
+        logger.error(f"Failed spray at target operation: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/drone/<int:drone_id>/spray/mission/upload', methods=['POST'])
+def upload_spray_mission(drone_id):
+    """Upload a spray mission with multiple targets"""
+    if drone_id not in drones or not drones[drone_id].connected:
+        return jsonify({'error': 'Drone not connected'}), 404
+    
+    try:
+        data = request.json
+        targets = data.get('targets', [])
+        
+        if not targets:
+            return jsonify({'error': 'No targets provided'}), 400
+        
+        logger.info(f"📋 Uploading spray mission for Drone {drone_id}: {len(targets)} targets")
+        
+        # Convert spray targets to MAVLink waypoints
+        waypoints = []
+        
+        # Add home/takeoff point as waypoint 0
+        current_lat = drones[drone_id].telemetry.get('latitude', 0)
+        current_lon = drones[drone_id].telemetry.get('longitude', 0)
+        
+        waypoints.append({
+            'seq': 0,
+            'frame': mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,
+            'command': mavutil.mavlink.MAV_CMD_NAV_WAYPOINT,
+            'current': 1,
+            'autocontinue': 1,
+            'param1': 0,
+            'param2': 0,
+            'param3': 0,
+            'param4': 0,
+            'x': current_lat,
+            'y': current_lon,
+            'z': 0,
+            'mission_type': mavutil.mavlink.MAV_MISSION_TYPE_MISSION
+        })
+        
+        # Add spray targets as waypoints with loiter
+        for idx, target in enumerate(targets, start=1):
+            # Navigate to target
+            waypoints.append({
+                'seq': idx * 2 - 1,
+                'frame': mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,
+                'command': mavutil.mavlink.MAV_CMD_NAV_WAYPOINT,
+                'current': 0,
+                'autocontinue': 1,
+                'param1': target.get('loiter_time_sec', 5),  # Loiter time
+                'param2': 0,
+                'param3': 0,
+                'param4': 0,
+                'x': target['latitude'],
+                'y': target['longitude'],
+                'z': target.get('altitude', 5),
+                'mission_type': mavutil.mavlink.MAV_MISSION_TYPE_MISSION
+            })
+            
+            # Activate spray at target (DO_SET_SERVO command)
+            waypoints.append({
+                'seq': idx * 2,
+                'frame': mavutil.mavlink.MAV_FRAME_MISSION,
+                'command': mavutil.mavlink.MAV_CMD_DO_SET_SERVO,
+                'current': 0,
+                'autocontinue': 1,
+                'param1': target.get('servo_channel', 9),
+                'param2': target.get('spray_pwm', 1900),
+                'param3': 0,
+                'param4': 0,
+                'x': 0,
+                'y': 0,
+                'z': 0,
+                'mission_type': mavutil.mavlink.MAV_MISSION_TYPE_MISSION
+            })
+        
+        # Upload waypoints to drone
+        upload_result = drones[drone_id].upload_mission(waypoints)
+        
+        if upload_result:
+            return jsonify({
+                'success': True,
+                'drone_id': drone_id,
+                'waypoints_uploaded': len(waypoints),
+                'spray_targets': len(targets)
+            })
+        else:
+            return jsonify({'success': False, 'error': 'Mission upload failed'}), 500
+        
+    except Exception as e:
+        logger.error(f"Failed to upload spray mission: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 if __name__ == '__main__':
     logger.info("🚀 Starting PyMAVLink Service...")
     logger.info("📡 Service will listen on http://0.0.0.0:5000")
     logger.info("🌾 Long-range Pi control enabled via MAVLink (commands 42000-42999)")
+    logger.info("💧 Spray control enabled (servo/relay commands)")
     
     # Start Flask server
     app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)

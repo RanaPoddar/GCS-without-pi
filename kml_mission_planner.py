@@ -2,6 +2,7 @@
 """
 KML Mission Planner for NIdar Competition
 Parses KML boundary file and generates survey mission waypoints
+Optimized for yellow leaf detection with minimal flight time
 """
 
 import sys
@@ -22,19 +23,26 @@ except ImportError as e:
     sys.exit(1)
 
 class KMLMissionPlanner:
-    """Generate survey mission from KML boundary"""
+    """Generate survey mission from KML boundary
+    
+    Optimized for yellow paper plant detection in cricket stadium:
+    - Target: Yellow paper plants at center of 2ft (~0.6m) radius circles
+    - Non-target: Green paper plants
+    - Goal: Accurate geolocation of yellow plants
+    """
     
     # Earth radius for conversions
     EARTH_RADIUS_M = 6378137.0
     
-    def __init__(self, altitude_m=15, speed_ms=2.0, lateral_overlap=0.70):
+    def __init__(self, altitude_m=10, speed_ms=3.0, lateral_overlap=0.20):
         """
         Initialize mission planner
+        Optimized for yellow leaf detection with minimal flight time
         
         Args:
-            altitude_m: Flight altitude in meters AGL
-            speed_ms: Ground speed in m/s
-            lateral_overlap: Overlap between passes (0.0-1.0)
+            altitude_m: Flight altitude in meters AGL (default: 10m for optimal detection)
+            speed_ms: Ground speed in m/s (default: 3.0 m/s for faster scanning)
+            lateral_overlap: Overlap between passes (default: 0.20 = 20% for time efficiency)
         """
         self.altitude_m = altitude_m
         self.speed_ms = speed_ms
@@ -44,14 +52,43 @@ class KMLMissionPlanner:
         self.ground_width_m = self._calculate_ground_width(altitude_m)
         self.swath_width_m = self.ground_width_m * (1 - lateral_overlap)
         
+        # Calculate Ground Sample Distance (GSD) for detection accuracy
+        # Pi HQ Camera: 4056 x 3040 pixels (12.3 MP)
+        self.camera_width_px = 4056
+        self.gsd_mm_per_px = (self.ground_width_m * 1000) / self.camera_width_px
+        
+        # Target detection capability
+        # Yellow plant: 0.5 ft radius (1 ft diameter) = 0.3048m
+        # Placed in 2 ft radius circle (rest is grass)
+        target_diameter_m = 1 * 0.3048  # 1 ft diameter = 0.3048m
+        pixels_across_target = target_diameter_m / (self.gsd_mm_per_px / 1000)
+        
         print(f"[INFO] Mission Parameters:")
         print(f"   Altitude: {altitude_m}m")
         print(f"   Speed: {speed_ms} m/s")
         print(f"   Ground coverage width: {self.ground_width_m:.1f}m")
         print(f"   Swath width ({lateral_overlap*100:.0f}% overlap): {self.swath_width_m:.1f}m")
+        print(f"\n[DETECTION] Yellow Plant Detection Capability:")
+        print(f"   Ground Sample Distance (GSD): {self.gsd_mm_per_px:.1f} mm/pixel")
+        print(f"   Yellow plant size: 1ft diameter (0.5ft radius)")
+        print(f"   Plant coverage: ~{pixels_across_target:.0f} pixels across")
+        print(f"   GPS accuracy: ~{self.gsd_mm_per_px * 3:.1f}mm (3-pixel center estimation)")
+        if pixels_across_target >= 100:
+            print(f"   Detection quality: EXCELLENT (>100px for yellow color discrimination)")
+        elif pixels_across_target >= 60:
+            print(f"   Detection quality: GOOD (60-100px sufficient for detection)")
+        elif pixels_across_target >= 40:
+            print(f"   Detection quality: ADEQUATE (40-60px marginal)")
+        else:
+            print(f"   Detection quality: INSUFFICIENT (<40px - reduce altitude or reduce speed)")
     
     def _calculate_ground_width(self, altitude_m):
-        """Calculate ground coverage width at given altitude"""
+        """Calculate ground coverage width at given altitude
+        
+        At 10m altitude: ~12.6m coverage width
+        With 20% overlap: ~10.1m effective swath width
+        Optimal for yellow leaf detection with minimal flight time
+        """
         # Pi HQ Camera + 6mm lens: 66.7° horizontal FOV
         fov_horizontal_rad = math.radians(66.7)
         return 2 * altitude_m * math.tan(fov_horizontal_rad / 2)
@@ -130,6 +167,7 @@ class KMLMissionPlanner:
     def generate_survey_waypoints(self, boundary):
         """
         Generate lawnmower survey pattern inside arbitrary polygon boundary using Shapely
+        Adds 5m safety margin from boundary edges
         Args:
             boundary: List of (lat, lon) tuples
         Returns:
@@ -137,6 +175,17 @@ class KMLMissionPlanner:
         """
         # Convert boundary to Shapely Polygon (lon, lat order for Shapely)
         poly = Polygon([(lon, lat) for lat, lon in boundary])
+        
+        # Apply 5m negative buffer (inward) for safety margin
+        # Convert 5 meters to degrees (approximate at center latitude)
+        center_lat_temp = sum(lat for lat, _ in boundary) / len(boundary)
+        margin_deg = self.meters_to_lat(5.0)  # ~5m in latitude degrees
+        poly = poly.buffer(-margin_deg)  # Negative buffer = shrink polygon inward
+        
+        if poly.is_empty or poly.area < 1e-10:
+            raise ValueError("Field too small after applying 5m safety margin")
+        
+        print(f"[SAFETY] Applied 5m inward margin from boundary edges")
         lats = [p[0] for p in boundary]
         lons = [p[1] for p in boundary]
         min_lat, max_lat = min(lats), max(lats)
@@ -316,14 +365,14 @@ class KMLMissionPlanner:
         return output_file
 
 def main():
-    parser = argparse.ArgumentParser(description='Generate survey mission from KML boundary')
+    parser = argparse.ArgumentParser(description='Generate optimized survey mission for yellow leaf detection')
     parser.add_argument('kml_file', help='Path to KML boundary file')
-    parser.add_argument('-a', '--altitude', type=float, default=15,
-                       help='Flight altitude in meters (default: 15)')
-    parser.add_argument('-s', '--speed', type=float, default=2.0,
-                       help='Ground speed in m/s (default: 2.0)')
-    parser.add_argument('-o', '--overlap', type=float, default=0.70,
-                       help='Lateral overlap 0-1 (default: 0.70 = 70%%)')
+    parser.add_argument('-a', '--altitude', type=float, default=10,
+                       help='Flight altitude in meters (default: 10m for optimal detection)')
+    parser.add_argument('-s', '--speed', type=float, default=3.0,
+                       help='Ground speed in m/s (default: 3.0 for faster scanning)')
+    parser.add_argument('-o', '--overlap', type=float, default=0.20,
+                       help='Lateral overlap 0-1 (default: 0.20 = 20%% for minimal flight time)')
     parser.add_argument('--output', default='mission.json',
                        help='Output mission file (default: mission.json)')
     

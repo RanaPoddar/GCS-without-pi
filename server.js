@@ -19,6 +19,7 @@ const waypointService = require('./services/waypointService');
 const droneRoutes = require('./routes/droneRoutes');
 const missionRoutes = require('./routes/missionRoutes');
 const waypointRoutes = require('./routes/waypointRoutes');
+const sprayerRoutes = require('./routes/sprayerRoutes');
 
 // Import socket handlers
 const { setupSocketHandlers } = require('./socket/socketHandlersPyMAVLink');
@@ -43,6 +44,7 @@ app.use('/api/drone', droneRoutes); // Keep both for backwards compatibility
 app.use('/api/mission', missionRoutes);
 app.use('/api/missions', missionRoutes);
 app.use('/api/waypoints', waypointRoutes);
+app.use('/api/sprayer', sprayerRoutes);
 
 // Create necessary directories
 [config.PUBLIC_DIR, config.DATA_DIR, config.MISSIONS_DIR, config.KML_UPLOADS_DIR].forEach(dir => {
@@ -100,6 +102,9 @@ app.get('/stream', (req, res) => {
 
 // Setup Socket.IO handlers
 setupSocketHandlers(io);
+
+// Make io accessible to routes
+app.set('io', io);
 
 
 // Initialize Pixhawk connections after a short delay

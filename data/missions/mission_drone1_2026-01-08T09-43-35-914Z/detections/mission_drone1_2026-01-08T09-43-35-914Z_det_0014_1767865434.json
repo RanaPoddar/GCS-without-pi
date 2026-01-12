@@ -1,0 +1,15 @@
+{
+  "detection_id": "mission_drone1_2026-01-08T09-43-35-914Z_det_0014_1767865434",
+  "timestamp": "2026-01-08T15:13:54.895662",
+  "latitude": 0,
+  "longitude": 0,
+  "altitude": 0,
+  "confidence": 0.7119137241424002,
+  "centroid": {
+    "x": 544,
+    "y": 205
+  },
+  "heading": 101,
+  "drone_mode": "UNKNOWN",
+  "image_path": "images/mission_drone1_2026-01-08T09-43-35-914Z_det_0014_1767865434.jpg"
+}

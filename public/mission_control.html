@@ -217,6 +217,95 @@
                     </div>
                 </div>
 
+                <!-- Sprayer Control -->
+                <div class="panel-section">
+                    <h3 class="section-title">
+                        <span class="section-icon">💧</span>
+                        Sprayer Control (Drone 2)
+                    </h3>
+                    
+                    <!-- Tank Status Gauge -->
+                    <div class="tank-status">
+                        <div class="tank-label">Tank Level</div>
+                        <div class="tank-gauge-container">
+                            <div class="tank-gauge">
+                                <div class="tank-fill" id="tankFill" style="height: 100%"></div>
+                            </div>
+                            <div class="tank-info">
+                                <div class="tank-volume"><span id="tankVolume">1000</span>ml</div>
+                                <div class="tank-percent"><span id="tankPercent">100</span>%</div>
+                                <div class="tank-targets-remaining">
+                                    <span id="targetsRemaining">20</span> sprays left
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Spray Queue Info -->
+                    <div class="spray-queue-info">
+                        <div class="info-item">
+                            <span class="info-label">Targets Queued:</span>
+                            <span class="info-value" id="sprayQueueCount">0</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Completed:</span>
+                            <span class="info-value" id="sprayCompleted">0</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Refills:</span>
+                            <span class="info-value" id="sprayRefills">0</span>
+                        </div>
+                    </div>
+                    
+                    <!-- Spray Control Buttons -->
+                    <div class="action-buttons">
+                        <button class="btn btn-success" id="queueDetectionsForSpray">
+                            <span class="btn-icon">➕</span>
+                            Queue All Detections
+                        </button>
+                        
+                        <button class="btn btn-primary" id="startSprayMission" disabled>
+                            <span class="btn-icon">▶️</span>
+                            Start Spray Mission
+                        </button>
+                        
+                        <button class="btn btn-warning" id="stopSprayMission" disabled>
+                            <span class="btn-icon">⏹️</span>
+                            Stop Spraying
+                        </button>
+                        
+                        <button class="btn btn-danger" id="clearSprayQueue">
+                            <span class="btn-icon">🗑️</span>
+                            Clear Queue
+                        </button>
+                    </div>
+                    
+                    <!-- Refill Control (shown when refill needed) -->
+                    <div class="refill-alert hidden" id="refillAlert">
+                        <div class="alert-icon">⚠️</div>
+                        <div class="alert-text">
+                            <strong>Refill Required</strong>
+                            <p>Drone returning to home for tank refill</p>
+                        </div>
+                        <button class="btn btn-success" id="confirmRefill">
+                            <span class="btn-icon">✅</span>
+                            Refill Complete
+                        </button>
+                    </div>
+                    
+                    <!-- Spray Mission Status -->
+                    <div class="spray-mission-status hidden" id="sprayMissionStatus">
+                        <div class="info-item">
+                            <span class="info-label">Status:</span>
+                            <span class="info-value" id="sprayStatus">Idle</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Current Target:</span>
+                            <span class="info-value" id="sprayCurrentTarget">-</span>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Mission Progress -->
                 <div class="panel-section">
                     <h3 class="section-title">
