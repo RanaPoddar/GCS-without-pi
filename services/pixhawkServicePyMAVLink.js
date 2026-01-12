@@ -10,6 +10,7 @@ const TELEMETRY_POLL_INTERVAL = 250; // ms
 const connectedDrones = new Map();
 const droneStats = new Map();
 const telemetryIntervals = new Map();
+const processedDetections = new Set(); // Track processed detection IDs to avoid duplicates
 
 /**
  * Make HTTP request to PyMAVLink service
@@ -34,6 +35,108 @@ async function callPyMAVLink(endpoint, method = 'GET', data = null) {
       success: false, 
       error: error.response?.data?.error || error.message 
     };
+  }
+}
+
+/**
+ * Process STATUSTEXT messages for detection data
+ */
+function processStatustextForDetections(droneId, statustextLog, io) {
+  const missionService = require('./missionService');
+  
+  for (const entry of statustextLog) {
+    const text = entry.text || '';
+    
+    // Check for detection message format: DET|ID|LAT|LON|CONF|AREA
+    if (text.startsWith('DET|')) {
+      const parts = text.split('|');
+      
+      if (parts.length >= 6) {
+        const detectionId = parts[1];
+        
+        // Skip if already processed
+        if (processedDetections.has(detectionId)) {
+          continue;
+        }
+        
+        const detection = {
+          detection_id: detectionId,
+          latitude: parseFloat(parts[2]),
+          longitude: parseFloat(parts[3]),
+          confidence: parseFloat(parts[4]),
+          detection_area: parseInt(parts[5]),
+          source: 'mavlink',
+          timestamp: entry.timestamp || Date.now() / 1000
+        };
+        
+        logger.info(`🌾 Detection via MAVLink from Drone ${droneId}: ${detection.detection_id} at (${detection.latitude}, ${detection.longitude})`);
+        
+        // Save detection
+        const detectionData = missionService.saveDetection(droneId, detection);
+        
+        if (detectionData && io) {
+          io.emit('crop_detection', detectionData);
+          logger.info(`   ✅ Detection broadcasted to all clients`);
+        }
+        
+        // Mark as processed
+        processedDetections.add(detectionId);
+        
+        // Clean up old processed IDs (keep last 1000)
+        if (processedDetections.size > 1000) {
+          const toDelete = Array.from(processedDetections).slice(0, 100);
+          toDelete.forEach(id => processedDetections.delete(id));
+        }
+      }
+    }
+    // Check for detection stats: DSTAT|TOTAL|ACTIVE|MISSION_ID
+    else if (text.startsWith('DSTAT|')) {
+      const parts = text.split('|');
+      if (parts.length >= 4) {
+        logger.info(`📊 Detection Stats from Drone ${droneId}: Total=${parts[1]}, Active=${parts[2]}, Mission=${parts[3]}`);
+        if (io) {
+          io.emit('detection_stats', {
+            drone_id: droneId,
+            total_detections: parseInt(parts[1]),
+            active_status: parts[2],
+            mission_id: parts[3],
+            timestamp: entry.timestamp || Date.now() / 1000
+          });
+        }
+      }
+    }
+    // Check for image captured: IMG|ID|PATH
+    else if (text.startsWith('IMG|')) {
+      const parts = text.split('|');
+      if (parts.length >= 3) {
+        logger.info(`📷 Image captured from Drone ${droneId}: ${parts[1]} -> ${parts[2]}`);
+        if (io) {
+          io.emit('image_captured', {
+            drone_id: droneId,
+            detection_id: parts[1],
+            image_path: parts[2],
+            timestamp: entry.timestamp || Date.now() / 1000
+          });
+        }
+      }
+    }
+    // Check for system status: STAT|CPU|MEM|DISK|TEMP
+    else if (text.startsWith('STAT|')) {
+      const parts = text.split('|');
+      if (parts.length >= 5) {
+        logger.debug(`💻 Pi Stats from Drone ${droneId}: CPU=${parts[1]}% MEM=${parts[2]}% DISK=${parts[3]}% TEMP=${parts[4]}°C`);
+        if (io) {
+          io.emit('pi_stats', {
+            drone_id: droneId,
+            cpu_percent: parseFloat(parts[1]),
+            memory_percent: parseFloat(parts[2]),
+            disk_percent: parseFloat(parts[3]),
+            temperature: parseFloat(parts[4]),
+            timestamp: entry.timestamp || Date.now() / 1000
+          });
+        }
+      }
+    }
   }
 }
 
@@ -94,6 +197,11 @@ function startTelemetryPolling(droneId, io) {
       // Log to active mission if needed
       const missionService = require('./missionService');
       missionService.logTelemetry(droneId, telemetryData);
+      
+      // Check for detection messages in STATUSTEXT
+      if (result.data.telemetry.statustext_log && Array.isArray(result.data.telemetry.statustext_log)) {
+        processStatustextForDetections(droneId, result.data.telemetry.statustext_log, io);
+      }
     }
   }, TELEMETRY_POLL_INTERVAL);
   

@@ -189,6 +189,9 @@ class PixhawkConnection extends EventEmitter {
       case 'BatteryStatus':
         this.handleBatteryStatus(message);
         break;
+      case 'Statustext':
+        this.handleStatustext(message);
+        break;
       default:
         // Uncomment for debugging all messages
         // this.logger.debug(`[Drone ${this.droneId}] Received: ${msgName}`);
@@ -208,7 +211,7 @@ class PixhawkConnection extends EventEmitter {
     this.telemetryData.flight_mode = this.parseFlightMode(customMode);
     
     if (!this._heartbeatLogged) {
-      this.logger.info(`[Drone ${this.droneId}] 💓 Heartbeat received - Mode: ${this.telemetryData.flight_mode}, Armed: ${this.telemetryData.armed}`);
+      this.logger.info(`[Drone ${this.droneId}]  Heartbeat received - Mode: ${this.telemetryData.flight_mode}, Armed: ${this.telemetryData.armed}`);
       this._heartbeatLogged = true;
     }
     
@@ -279,6 +282,123 @@ class PixhawkConnection extends EventEmitter {
     }
     this.telemetryData.battery.current = message.currentBattery / 100; // cA to A
     this.telemetryData.battery.remaining = message.batteryRemaining;
+  }
+
+  handleStatustext(message) {
+    // Decode STATUSTEXT message (from Pi via MAVLink)
+    const text = message.text.toString('utf-8').replace(/\0/g, '').trim();
+    
+    this.logger.info(`[Drone ${this.droneId}]  STATUSTEXT: "${text}"`);
+    
+    // Parse detection messages from Pi
+    // Format: DET|ID|LAT|LON|CONF|AREA
+    if (text.startsWith('DET|')) {
+      try {
+        const parts = text.split('|');
+        if (parts.length >= 6) {
+          const detection = {
+            detection_id: parts[1],
+            latitude: parseFloat(parts[2]),
+            longitude: parseFloat(parts[3]),
+            confidence: parseFloat(parts[4]),
+            detection_area: parseInt(parts[5]),
+            source: 'mavlink',
+            drone_id: this.droneId,
+            timestamp: new Date().toISOString(),
+            pi_id: 'detection_drone_pi_pushpak' // Assume from Pi
+          };
+          
+          this.logger.info(`[Drone ${this.droneId}]  Detection via MAVLink: ${detection.detection_id} at (${detection.latitude}, ${detection.longitude})`);
+          
+          // Emit detection event for socket handlers
+          this.emit('detection', detection);
+        }
+      } catch (error) {
+        this.logger.error(`[Drone ${this.droneId}] Failed to parse detection: ${error.message}`);
+      }
+    }
+    // Parse detection summary messages
+    // Format: DSTAT|TOTAL|ACTIVE|MISSION
+    else if (text.startsWith('DSTAT|')) {
+      try {
+        const parts = text.split('|');
+        if (parts.length >= 4) {
+          const summary = {
+            total_detections: parseInt(parts[1]),
+            detection_active: parts[2] === '1',
+            mission_id: parts[3],
+            source: 'mavlink',
+            drone_id: this.droneId,
+            timestamp: new Date().toISOString()
+          };
+          
+          this.logger.info(`[Drone ${this.droneId}]  Detection summary: ${summary.total_detections} total, active: ${summary.detection_active}`);
+          
+          this.emit('detection_summary', summary);
+        }
+      } catch (error) {
+        this.logger.error(`[Drone ${this.droneId}] Failed to parse summary: ${error.message}`);
+      }
+    }
+    // Parse image metadata messages
+    // Format: IMG|ID|LAT|LON|TYPE|MISSION
+    else if (text.startsWith('IMG|')) {
+      try {
+        const parts = text.split('|');
+        if (parts.length >= 6) {
+          const imageMetadata = {
+            image_id: parts[1],
+            latitude: parseFloat(parts[2]),
+            longitude: parseFloat(parts[3]),
+            image_type: parts[4],
+            mission_id: parts[5],
+            source: 'mavlink',
+            drone_id: this.droneId,
+            timestamp: new Date().toISOString()
+          };
+          
+          this.logger.info(`[Drone ${this.droneId}] 📸 Image metadata: ${imageMetadata.image_id}`);
+          
+          this.emit('image_metadata', imageMetadata);
+        }
+      } catch (error) {
+        this.logger.error(`[Drone ${this.droneId}] Failed to parse image metadata: ${error.message}`);
+      }
+    }
+    // Parse system stats messages
+    // Format: STAT|CPU|MEM|DISK|TEMP
+    else if (text.startsWith('STAT|')) {
+      try {
+        const parts = text.split('|');
+        if (parts.length >= 5) {
+          const stats = {
+            cpu_usage: parseFloat(parts[1]),
+            memory_usage: parseFloat(parts[2]),
+            disk_usage: parseFloat(parts[3]),
+            cpu_temp: parseFloat(parts[4]),
+            source: 'mavlink',
+            drone_id: this.droneId,
+            timestamp: new Date().toISOString()
+          };
+          
+          this.logger.info(`[Drone ${this.droneId}]  Pi stats: CPU ${stats.cpu_usage}%, Temp ${stats.cpu_temp}°C`);
+          
+          this.emit('pi_stats', stats);
+        }
+      } catch (error) {
+        this.logger.error(`[Drone ${this.droneId}] Failed to parse stats: ${error.message}`);
+      }
+    }
+    // Other STATUSTEXT messages (from Pixhawk or other sources)
+    else {
+      // Emit generic statustext for logging/display
+      this.emit('statustext', {
+        drone_id: this.droneId,
+        text: text,
+        severity: message.severity,
+        timestamp: new Date().toISOString()
+      });
+    }
   }
 
   emitTelemetry() {
