@@ -45,7 +45,7 @@ const config = {
 
   // Mission default parameters
   MISSION_DEFAULTS: {
-    altitude: 15.0,
+    altitude: 8,
     speed: 2.0,
     field_size_acres: 2
   }

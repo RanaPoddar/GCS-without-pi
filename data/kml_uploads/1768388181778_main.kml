@@ -2,7 +2,7 @@
 <kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2" xmlns:kml="http://www.opengis.net/kml/2.2" xmlns:atom="http://www.w3.org/2005/Atom">
 <Document>
 	<name>Untitled layer</name>
-	<gx:CascadingStyle kml:id="__managed_style_2127D61E393CE7213DFF">
+	<gx:CascadingStyle kml:id="__managed_style_2ACDAFC3CD3CF165D104">
 		<Style>
 			<IconStyle>
 				<scale>1.2</scale>
@@ -25,7 +25,7 @@
 			</BalloonStyle>
 		</Style>
 	</gx:CascadingStyle>
-	<gx:CascadingStyle kml:id="__managed_style_1DF3570F403CE7213DFF">
+	<gx:CascadingStyle kml:id="__managed_style_19CC28F2923CF165D104">
 		<Style>
 			<IconStyle>
 				<Icon>
@@ -47,34 +47,34 @@
 			</BalloonStyle>
 		</Style>
 	</gx:CascadingStyle>
-	<StyleMap id="__managed_style_0349A4B10D3CE7213DFF">
+	<StyleMap id="__managed_style_08639539643CF165D104">
 		<Pair>
 			<key>normal</key>
-			<styleUrl>#__managed_style_1DF3570F403CE7213DFF</styleUrl>
+			<styleUrl>#__managed_style_19CC28F2923CF165D104</styleUrl>
 		</Pair>
 		<Pair>
 			<key>highlight</key>
-			<styleUrl>#__managed_style_2127D61E393CE7213DFF</styleUrl>
+			<styleUrl>#__managed_style_2ACDAFC3CD3CF165D104</styleUrl>
 		</Pair>
 	</StyleMap>
-	<Placemark id="09EBF5AFD23CE7213DE3">
+	<Placemark id="09ECF611103CF165D0F9">
 		<name>Untitled polygon</name>
 		<LookAt>
-			<longitude>77.52531643647063</longitude>
-			<latitude>28.42198860214171</latitude>
-			<altitude>213.0257109203048</altitude>
+			<longitude>77.52763698113033</longitude>
+			<latitude>28.42374987599495</latitude>
+			<altitude>212.5425278855774</altitude>
 			<heading>0</heading>
 			<tilt>0</tilt>
-			<gx:fovy>35</gx:fovy>
-			<range>615.8982087215554</range>
+			<gx:fovy>30.00000033730771</gx:fovy>
+			<range>999.580791140761</range>
 			<altitudeMode>absolute</altitudeMode>
 		</LookAt>
-		<styleUrl>#__managed_style_0349A4B10D3CE7213DFF</styleUrl>
+		<styleUrl>#__managed_style_08639539643CF165D104</styleUrl>
 		<Polygon>
 			<outerBoundaryIs>
 				<LinearRing>
 					<coordinates>
-						77.52488586115011,28.42255117034184,0 77.52480738995355,28.42223564440775,0 77.52506099815034,28.42219705025861,0 77.52514164906457,28.42253334260869,0 77.52488586115011,28.42255117034184,0 
+						77.5280209945218,28.42464562117686,0 77.52769704564979,28.42379609687884,0 77.52802214627565,28.42374325952851,0 77.52829907123773,28.4240238086965,0 77.52837586423568,28.42429798511937,0 77.52830921765469,28.42447699058446,0 77.5280209945218,28.42464562117686,0 
 					</coordinates>
 				</LinearRing>
 			</outerBoundaryIs>

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2">
   <Document>
-    <name>Untitled layer</name>
+    <name>AP_PANEL_1</name>
     <Style id="poly-000000-1200-77-nodesc-normal">
       <LineStyle>
         <color>ff000000</color>
@@ -41,18 +41,23 @@
       </Pair>
     </StyleMap>
     <Placemark>
-      <name>Test Flying Area</name>
+      <name>Polygon 16</name>
       <styleUrl>#poly-000000-1200-77-nodesc</styleUrl>
       <Polygon>
         <outerBoundaryIs>
           <LinearRing>
             <tessellate>1</tessellate>
             <coordinates>
-              77.5247803,28.4228435,0
-              77.5245229,28.4219282,0
-              77.5250808,28.421815,0
-              77.5253275,28.4227208,0
-              77.5247803,28.4228435,0
+              77.5279338,28.4248868,0
+              77.5275717,28.4236507,0
+              77.527915,28.4236012,0
+              77.5282181,28.4237002,0
+              77.5284542,28.423955,0
+              77.5285266,28.4242499,0
+              77.528477,28.4244386,0
+              77.5284006,28.4246178,0
+              77.5281752,28.4248065,0
+              77.5279338,28.4248868,0
             </coordinates>
           </LinearRing>
         </outerBoundaryIs>

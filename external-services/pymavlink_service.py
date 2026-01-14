@@ -257,9 +257,15 @@ class DroneConnection:
                         self.telemetry['airspeed'] = msg.airspeed if hasattr(msg, 'airspeed') else 0.0
                         self.telemetry['climb_rate'] = msg.climb if hasattr(msg, 'climb') else 0.0
                         self.telemetry['throttle'] = msg.throttle if hasattr(msg, 'throttle') else 0
-                        # Use VFR_HUD groundspeed if GLOBAL_POSITION_INT not available
-                        if 'groundspeed' not in self.telemetry or self.telemetry['groundspeed'] == 0:
+
+                        # Smooth groundspeed using a weighted average to reduce fluctuations
+                        if 'groundspeed' in self.telemetry and self.telemetry['groundspeed'] > 0:
+                            self.telemetry['groundspeed'] = (
+                                0.8 * self.telemetry['groundspeed'] + 0.2 * (msg.groundspeed if hasattr(msg, 'groundspeed') else 0.0)
+                            )
+                        else:
                             self.telemetry['groundspeed'] = msg.groundspeed if hasattr(msg, 'groundspeed') else 0.0
+
                         # Also get altitude from VFR_HUD as backup
                         if 'relative_altitude' not in self.telemetry or self.telemetry['relative_altitude'] == 0:
                             self.telemetry['relative_altitude'] = msg.alt if hasattr(msg, 'alt') else 0.0
@@ -1578,7 +1584,9 @@ class DroneConnection:
                     self.master.target_component,
                     mavutil.mavlink.MAV_CMD_MISSION_START,
                     0,  # confirmation
-                    0, 0, 0, 0, 0, 0, 0  # params (all unused)
+                    0,  # param1: first mission item (0 uses current)
+                    0,  # param2: last mission item (0 = all)
+                    0, 0, 0, 0, 0  # unused params
                 )
                 
                 # Wait for MAV_CMD_MISSION_START acknowledgment
@@ -1609,7 +1617,7 @@ class DroneConnection:
                 statustext_msg = self.master.recv_match(type='STATUSTEXT', blocking=False, timeout=0.05)
                 if statustext_msg:
                     text = statustext_msg.text.decode('utf-8') if isinstance(statustext_msg.text, bytes) else str(statustext_msg.text)
-                    severity = statustext_msg.severity
+                    severity = statustext_msg.severity;
                     logger.warning(f"🔴 STATUSTEXT during AUTO activation: [{severity}] {text}")
                     
                     # Check if RTL was triggered
@@ -2656,11 +2664,6 @@ def upload_spray_mission(drone_id):
         return jsonify({'error': str(e)}), 500
 
 
-if __name__ == '__main__':
-    logger.info("🚀 Starting PyMAVLink Service...")
-    logger.info("📡 Service will listen on http://0.0.0.0:5000")
-    logger.info("🌾 Long-range Pi control enabled via MAVLink (commands 42000-42999)")
-    logger.info("💧 Spray control enabled (servo/relay commands)")
-    
-    # Start Flask server
-    app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
+if __name__ == "__main__":
+    # Start the Flask server
+    app.run(host="0.0.0.0", port=5000, debug=True)

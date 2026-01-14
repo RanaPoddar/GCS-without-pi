@@ -76,7 +76,7 @@ router.post('/upload_kml', uploadKML.single('kml'), async (req, res) => {
     }
 
     const kmlPath = req.file.path;
-    const altitude = parseFloat(req.body.altitude) || 15.0;
+    const altitude = parseFloat(req.body.altitude) || 8.0;
     const speed = parseFloat(req.body.speed) || 2.0;
     const drone_id = parseInt(req.body.drone_id) || 1;
 

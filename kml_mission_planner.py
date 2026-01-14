@@ -34,15 +34,15 @@ class KMLMissionPlanner:
     # Earth radius for conversions
     EARTH_RADIUS_M = 6378137.0
     
-    def __init__(self, altitude_m=10, speed_ms=3.0, lateral_overlap=0.20):
+    def __init__(self, altitude_m=8, speed_ms=2.0, lateral_overlap=0.10):
         """
         Initialize mission planner
         Optimized for yellow leaf detection with minimal flight time
         
         Args:
-            altitude_m: Flight altitude in meters AGL (default: 10m for optimal detection)
-            speed_ms: Ground speed in m/s (default: 3.0 m/s for slower scanning)
-            lateral_overlap: Overlap between passes (default: 0.20 = 20% for time efficiency)
+            altitude_m: Flight altitude in meters AGL (default: 8.0m for optimal detection)
+            speed_ms: Ground speed in m/s (default: 2.0 m/s for slower scanning)
+            lateral_overlap: Overlap between passes (default: 0.10 = 10% for time efficiency)
         """
         self.altitude_m = altitude_m
         self.speed_ms = speed_ms
@@ -378,7 +378,7 @@ class KMLMissionPlanner:
                 "estimated_time_min": metadata['mission_time_min']
             },
             "waypoints": waypoints,  # Only survey waypoints (backend adds HOME/TAKEOFF/RTL)
-            "rtl_altitude": self.altitude_m + 10
+            "rtl_altitude": self.altitude_m + 5
         }
         
         with open(output_file, 'w') as f:
@@ -390,12 +390,12 @@ class KMLMissionPlanner:
 def main():
     parser = argparse.ArgumentParser(description='Generate optimized survey mission for yellow leaf detection')
     parser.add_argument('kml_file', help='Path to KML boundary file')
-    parser.add_argument('-a', '--altitude', type=float, default=10,
-                       help='Flight altitude in meters (default: 10m for optimal detection)')
-    parser.add_argument('-s', '--speed', type=float, default=3.0,
-                       help='Ground speed in m/s (default: 3.0 for faster scanning)')
-    parser.add_argument('-o', '--overlap', type=float, default=0.20,
-                       help='Lateral overlap 0-1 (default: 0.20 = 20%% for minimal flight time)')
+    parser.add_argument('-a', '--altitude', type=float, default=8.0,
+                       help='Flight altitude in meters (default: 8.0m for optimal detection)')
+    parser.add_argument('-s', '--speed', type=float, default=2.0,
+                       help='Ground speed in m/s (default: 2.0 for faster scanning)')
+    parser.add_argument('-o', '--overlap', type=float, default=0.10,
+                       help='Lateral overlap 0-1 (default: 0.10 = 10%% for minimal flight time)')
     parser.add_argument('--output', default='mission.json',
                        help='Output mission file (default: mission.json)')
     
