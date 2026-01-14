@@ -41,7 +41,7 @@ class KMLMissionPlanner:
         
         Args:
             altitude_m: Flight altitude in meters AGL (default: 10m for optimal detection)
-            speed_ms: Ground speed in m/s (default: 3.0 m/s for faster scanning)
+            speed_ms: Ground speed in m/s (default: 3.0 m/s for slower scanning)
             lateral_overlap: Overlap between passes (default: 0.20 = 20% for time efficiency)
         """
         self.altitude_m = altitude_m
@@ -221,20 +221,25 @@ class KMLMissionPlanner:
             if clipped.is_empty:
                 lat += step_lat
                 continue
-            # clipped can be MultiLineString or LineString
+
+            # Ensure segments are long enough to avoid frequent direction changes
+            min_segment_length = self.meters_to_lat(2 * self.swath_width_m)  # Minimum 2 swath widths
+
             if clipped.geom_type == 'LineString':
                 segments = [clipped]
             elif clipped.geom_type == 'MultiLineString':
-                segments = list(clipped.geoms)
+                segments = [seg for seg in clipped.geoms if seg.length >= min_segment_length]
             else:
                 lat += step_lat
                 continue
+
             for seg in segments:
                 coords = list(seg.coords)
                 if direction == 1:
                     start, end = coords[0], coords[-1]
                 else:
                     start, end = coords[-1], coords[0]
+
                 # Add start waypoint
                 waypoints.append({
                     "id": waypoint_id,
@@ -247,6 +252,22 @@ class KMLMissionPlanner:
                     "frame": "MAV_FRAME_GLOBAL_RELATIVE_ALT"
                 })
                 waypoint_id += 1
+
+                # Add intermediate waypoint for smoother transition
+                mid_lat = (start[1] + end[1]) / 2
+                mid_lon = (start[0] + end[0]) / 2
+                waypoints.append({
+                    "id": waypoint_id,
+                    "seq": waypoint_id - 1,
+                    "latitude": mid_lat,
+                    "longitude": mid_lon,
+                    "altitude": self.altitude_m,
+                    "speed": self.speed_ms,
+                    "command": "NAV_WAYPOINT",
+                    "frame": "MAV_FRAME_GLOBAL_RELATIVE_ALT"
+                })
+                waypoint_id += 1
+
                 # Add end waypoint
                 waypoints.append({
                     "id": waypoint_id,
@@ -259,8 +280,10 @@ class KMLMissionPlanner:
                     "frame": "MAV_FRAME_GLOBAL_RELATIVE_ALT"
                 })
                 waypoint_id += 1
+
                 pass_count += 1
                 direction *= -1  # Alternate direction
+
             lat += step_lat
         total_distance = pass_count * field_width_m
         mission_time_s = total_distance / self.speed_ms

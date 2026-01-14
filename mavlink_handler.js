@@ -381,7 +381,8 @@ class PixhawkConnection extends EventEmitter {
             timestamp: new Date().toISOString()
           };
           
-          this.logger.info(`[Drone ${this.droneId}]  Pi stats: CPU ${stats.cpu_usage}%, Temp ${stats.cpu_temp}°C`);
+          this.logger.info(`[Drone ${this.droneId}] 
+             Pi stats: CPU ${stats.cpu_usage}%, Temp ${stats.cpu_temp}°C`);
           
           this.emit('pi_stats', stats);
         }

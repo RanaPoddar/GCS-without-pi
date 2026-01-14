@@ -353,12 +353,16 @@
                 <div class="section" id="paramsSection" style="display: none;">
                     <div class="section-title">⚙️ Flight Parameters</div>
                     <div class="param-group">
-                        <label class="param-label">Altitude (meters)</label>
-                        <input type="number" id="altitude" class="param-input" value="15" step="1" min="10" max="50" />
+                        <label class="param-label">Altitude (m)</label>
+                        <input class="param-input" value="10" readonly style="background:#f0f0f0; color:#888;" />
                     </div>
                     <div class="param-group">
                         <label class="param-label">Speed (m/s)</label>
-                        <input type="number" id="speed" class="param-input" value="2.0" step="0.1" min="0.5" max="5.0" />
+                        <input class="param-input" value="3" readonly style="background:#f0f0f0; color:#888;" />
+                    </div>
+                    <div class="param-group">
+                        <label class="param-label">Lateral Overlap (%)</label>
+                        <input class="param-input" value="20" readonly style="background:#f0f0f0; color:#888;" />
                     </div>
                     <button class="btn btn-primary" id="generateBtn" onclick="generateMission()">
                         🔄 Generate Mission
@@ -368,9 +372,9 @@
                 <!-- Mission Preview -->
                 <div class="section" id="previewSection" style="display: none;">
                     <div class="section-title">📊 Mission Preview</div>
-                    <div class="mission-info" id="missionInfo"></div>
-                    <div class="status-badge" id="missionStatus"></div>
-                </div>
+                        <div class="param-group">
+                            <label class="param-label">Speed (m/s)</label>
+                            <input class="param-input" id="speed" type="number" value="3" readonly style="background:#f0f0f0; color:#888;" />
 
                 <!-- Start Mission -->
                 <div class="section" id="startSection" style="display: none;">
@@ -631,8 +635,9 @@
 
             const formData = new FormData();
             formData.append('kml', uploadedFile);
-            formData.append('altitude', document.getElementById('altitude').value);
-            formData.append('speed', document.getElementById('speed').value);
+            formData.append('altitude', 10);
+            formData.append('speed', 3);
+            formData.append('overlap', 0.20);
             formData.append('pi_id', 'pi_001');
 
             try {

@@ -56,11 +56,13 @@ function setupSocketHandlers(io) {
     //      Raspberry Pi Registration         |
     // ========================================
     
-    // Pi identifies itself
-    socket.on('pi_register', (data) => {
+    // Pi identifies itself (support both event names for compatibility)
+    const handlePiRegistration = (data) => {
       const piId = data.pi_id || socket.id;
       logger.info(`🥧 Raspberry Pi registered: ${piId}`);
       logger.info(`   Socket ID: ${socket.id}`);
+      logger.info(`   Type: ${data.type || 'unknown'}`);
+      logger.info(`   Capabilities: ${data.capabilities ? data.capabilities.join(', ') : 'none'}`);
       logger.info(`   Total Pis connected: ${connectedPis.size + 1}`);
       
       connectedPis.set(piId, {
@@ -72,23 +74,56 @@ function setupSocketHandlers(io) {
       });
       
       // Notify all clients
-      io.emit('pi_connected', { pi_id: piId });
+      io.emit('pi_connected', { pi_id: piId, type: data.type });
       logger.info(`   Broadcasted pi_connected event to all clients`);
+      
+      // Acknowledge registration to the Pi
+      socket.emit('pi_registered', { 
+        pi_id: piId, 
+        status: 'success',
+        server_time: new Date().toISOString()
+      });
+      logger.info(`   Sent registration acknowledgment to Pi`);
       
       // Store pi_id in socket for later use
       socket.pi_id = piId;
-    });
+    };
+    
+    socket.on('pi_register', handlePiRegistration);
+    socket.on('register_pi', handlePiRegistration);  // Alias for compatibility
     
     // Request list of connected Pis
     socket.on('request_pi_list', () => {
+      // Get WiFi-connected Pis
       const piList = Array.from(connectedPis.values()).map(pi => ({
         id: pi.id,
         connected: pi.connected,
-        connected_at: pi.connected_at
+        connected_at: pi.connected_at,
+        mode: 'wifi'
       }));
       
+      // Get telemetry-connected drones from PyMAVLink service
+      try {
+        const pixhawkService = require('../services/pixhawkServicePyMAVLink');
+        const drones = pixhawkService.getDroneStatusList();
+        
+        drones.forEach(drone => {
+          if (drone.connected) {
+            piList.push({
+              id: String(drone.drone_id), // Convert to string for dropdown compatibility
+              drone_id: drone.drone_id,
+              connected: true,
+              connected_at: drone.lastSeen,
+              mode: 'telemetry'
+            });
+          }
+        });
+      } catch (error) {
+        logger.debug('Pixhawk service not available');
+      }
+      
       socket.emit('pi_list', { pis: piList });
-      logger.info(`📋 Sent Pi list: ${piList.length} connected`);
+      logger.info(`📋 Sent Pi list: ${piList.length} total (WiFi + Telemetry)`);
     });
     
     // System stats from Pi

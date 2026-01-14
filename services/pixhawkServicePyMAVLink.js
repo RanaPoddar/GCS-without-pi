@@ -141,6 +141,60 @@ function processStatustextForDetections(droneId, statustextLog, io) {
 }
 
 /**
+ * Broadcast STATUSTEXT messages to dashboard
+ */
+function broadcastStatustextMessages(droneId, statustextLog, io) {
+  if (!io) return;
+  
+  // Track last broadcast timestamp per drone to avoid spam
+  if (!broadcastStatustextMessages.lastBroadcast) {
+    broadcastStatustextMessages.lastBroadcast = {};
+  }
+  
+  const now = Date.now();
+  const minInterval = 500; // Minimum 500ms between broadcasts per drone
+  
+  if (broadcastStatustextMessages.lastBroadcast[droneId] && 
+      now - broadcastStatustextMessages.lastBroadcast[droneId] < minInterval) {
+    return; // Too soon, skip this broadcast
+  }
+  
+  broadcastStatustextMessages.lastBroadcast[droneId] = now;
+  
+  // Send recent STATUSTEXT messages to dashboard
+  // Priority: warnings (severity < 4) and critical messages
+  const importantMessages = statustextLog
+    .filter(entry => {
+      const text = (entry.text || '').toLowerCase();
+      const severity = entry.severity || 6;
+      
+      // Always show critical messages (severity < 4)
+      if (severity < 4) return true;
+      
+      // Always show these keywords
+      const keywords = [
+        'rtl', 'failsafe', 'battery', 'fence', 'ekf', 'gps',
+        'pre-arm', 'arming', 'mode', 'waypoint', 'mission',
+        'error', 'failed', 'bad', 'compass', 'variance'
+      ];
+      
+      return keywords.some(keyword => text.includes(keyword));
+    })
+    .slice(-5); // Last 5 important messages
+  
+  if (importantMessages.length > 0) {
+    io.emit('statustext_messages', {
+      drone_id: droneId,
+      messages: importantMessages.map(entry => ({
+        text: entry.text,
+        severity: entry.severity || 6,
+        timestamp: entry.timestamp || Date.now() / 1000
+      }))
+    });
+  }
+}
+
+/**
  * Start telemetry polling for a drone
  */
 function startTelemetryPolling(droneId, io) {
@@ -201,6 +255,11 @@ function startTelemetryPolling(droneId, io) {
       // Check for detection messages in STATUSTEXT
       if (result.data.telemetry.statustext_log && Array.isArray(result.data.telemetry.statustext_log)) {
         processStatustextForDetections(droneId, result.data.telemetry.statustext_log, io);
+      }
+      
+      // Broadcast STATUSTEXT messages to dashboard
+      if (result.data.telemetry.statustext_log && Array.isArray(result.data.telemetry.statustext_log)) {
+        broadcastStatustextMessages(droneId, result.data.telemetry.statustext_log, io);
       }
     }
   }, TELEMETRY_POLL_INTERVAL);

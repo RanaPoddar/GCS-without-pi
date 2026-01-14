@@ -9,6 +9,7 @@ import time
 import json
 import threading
 import math
+import requests
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from pymavlink import mavutil
@@ -266,8 +267,50 @@ class DroneConnection:
                     elif msg_type == 'STATUSTEXT':
                         # Capture status messages for debugging (pre-arm failures, etc.)
                         severity = getattr(msg, 'severity', 0)
-                        text = getattr(msg, 'text', '')
+                        text = getattr(msg, 'text', '').strip()
                         timestamp = time.time()
+                        
+                        # Parse detection messages (sent by Pi via MAVLink)
+                        # Format: DET|ID|LAT|LON|CONF|AREA
+                        if text.startswith('DET|'):
+                            try:
+                                parts = text.split('|')
+                                if len(parts) >= 6:
+                                    detection_data = {
+                                        'detection_id': parts[1],
+                                        'latitude': float(parts[2]),
+                                        'longitude': float(parts[3]),
+                                        'confidence': float(parts[4]),
+                                        'detection_area': int(parts[5]) if parts[5].isdigit() else 0,
+                                        'timestamp': timestamp,
+                                        'drone_id': self.drone_id,
+                                        'source': 'mavlink_telemetry'
+                                    }
+                                    # Emit detection to Node.js server
+                                    self._forward_detection_to_server(detection_data)
+                                    logger.info(f"📡 Drone {self.drone_id} MAVLink Detection: {parts[1]} at ({parts[2]}, {parts[3]})")
+                            except Exception as e:
+                                logger.error(f"Failed to parse detection message: {text}, error: {e}")
+                        
+                        # Parse detection stats: DSTAT|TOTAL|ACTIVE|MISSION_ID
+                        elif text.startswith('DSTAT|'):
+                            try:
+                                parts = text.split('|')
+                                if len(parts) >= 4:
+                                    logger.info(f"📊 Drone {self.drone_id} Detection Stats: Total={parts[1]}, Active={parts[2]}, Mission={parts[3]}")
+                            except Exception as e:
+                                logger.error(f"Failed to parse detection stats: {text}, error: {e}")
+                        
+                        # Parse system stats: STAT|CPU|MEM|DISK|TEMP
+                        elif text.startswith('STAT|'):
+                            try:
+                                parts = text.split('|')
+                                if len(parts) >= 5:
+                                    logger.debug(f"💻 Drone {self.drone_id} Pi Stats: CPU={parts[1]}% MEM={parts[2]}% DISK={parts[3]}% TEMP={parts[4]}°C")
+                            except Exception as e:
+                                logger.error(f"Failed to parse system stats: {text}, error: {e}")
+                        
+                        # Store all STATUSTEXT messages
                         status_entry = {'severity': severity, 'text': text, 'timestamp': timestamp}
                         self.statustext_log.append(status_entry)
                         # Keep only last N messages
@@ -374,6 +417,36 @@ class DroneConnection:
         dlat = target_lat - self.telemetry['latitude']
         dlon = target_lon - self.telemetry['longitude']
         return math.sqrt(dlat**2 + dlon**2)
+    
+    def _forward_detection_to_server(self, detection_data):
+        """Forward MAVLink detection data to Node.js server via Socket.IO"""
+        try:
+            # For now, we'll store it in telemetry to be picked up by polling
+            # In production, you'd use WebSocket or direct HTTP POST to Node.js
+            if 'mavlink_detections' not in self.telemetry:
+                self.telemetry['mavlink_detections'] = []
+            
+            self.telemetry['mavlink_detections'].append(detection_data)
+            
+            # Keep only last 50 detections
+            if len(self.telemetry['mavlink_detections']) > 50:
+                self.telemetry['mavlink_detections'] = self.telemetry['mavlink_detections'][-50:]
+            
+            # Also try to POST directly to Node.js server
+            try:
+                response = requests.post(
+                    'http://localhost:3000/api/mavlink-detection',
+                    json=detection_data,
+                    timeout=1
+                )
+                if response.status_code == 200:
+                    logger.debug(f"Detection forwarded to Node.js server: {detection_data['detection_id']}")
+            except Exception as e:
+                # Silently fail - telemetry polling will pick it up
+                pass
+                
+        except Exception as e:
+            logger.error(f"Error forwarding detection: {e}")
     
     def arm(self):
         """Arm the drone with verification (or simulate)"""
@@ -672,7 +745,7 @@ class DroneConnection:
                 0,  # yaw - yaw setpoint in radians (not used)
                 0   # yaw_rate - yaw rate setpoint in rad/s (not used)
             )
-            logger.info(f"✅ Navigate command sent to Drone {self.drone_id}: ({latitude}, {longitude}) @ {altitude}m")
+            logger.info(f" Navigate command sent to Drone {self.drone_id}: ({latitude}, {longitude}) @ {altitude}m")
             return True
         except Exception as e:
             logger.error(f"Failed to navigate Drone {self.drone_id}: {e}")
@@ -758,10 +831,10 @@ class DroneConnection:
                 logger.error("Failed to parse .waypoints file")
                 return False
             
-            logger.info(f"📤 Uploading mission from .waypoints file ({len(waypoints)} items)")
+            logger.info(f" Uploading mission from .waypoints file ({len(waypoints)} items)")
             
             if self.simulation:
-                logger.info(f"🎮 SIMULATION: Pretending to upload {len(waypoints)} waypoints from file...")
+                logger.info(f" SIMULATION: Pretending to upload {len(waypoints)} waypoints from file...")
                 time.sleep(0.5)
                 
                 # Store waypoints for start_mission() to work
@@ -829,7 +902,7 @@ class DroneConnection:
                     
                     if msg is None:
                         timeout_count += 1
-                        logger.warning(f"⏱️  Timeout {timeout_count}/{max_timeouts} waiting for request")
+                        logger.warning(f"  Timeout {timeout_count}/{max_timeouts} waiting for request")
                         continue
                     
                     if msg.get_type() == 'HEARTBEAT':
@@ -840,11 +913,11 @@ class DroneConnection:
                         req_seq = msg.seq
                         
                         if req_seq >= len(waypoints):
-                            logger.error(f"❌ Requested seq {req_seq} out of range (max {len(waypoints)-1})")
+                            logger.error(f" Requested seq {req_seq} out of range (max {len(waypoints)-1})")
                             break
                         
                         if req_seq in waypoints_sent:
-                            logger.warning(f"⚠️ Resending waypoint {req_seq} (already sent)")
+                            logger.warning(f" Resending waypoint {req_seq} (already sent)")
                         
                         # Get waypoint from parsed file
                         wp = waypoints[req_seq]
@@ -878,11 +951,11 @@ class DroneConnection:
                     ack = self.master.recv_match(type='MISSION_ACK', blocking=True, timeout=3.0)
                     if ack:
                         if ack.type == mavutil.mavlink.MAV_MISSION_ACCEPTED:
-                            logger.info(f"✅ Mission ACK received: ACCEPTED")
+                            logger.info(f" Mission ACK received: ACCEPTED")
                             ack_received = True
                             break
                         else:
-                            logger.error(f"❌ Mission ACK: {ack.type}")
+                            logger.error(f" Mission ACK: {ack.type}")
                 
                 if ack_received:
                     time.sleep(2.0)  # EEPROM write delay
@@ -899,11 +972,11 @@ class DroneConnection:
                             })
                     
                     self.mission_waypoints = survey_waypoints
-                    logger.info(f"✅ Mission from .waypoints file uploaded successfully!")
+                    logger.info(f" Mission from .waypoints file uploaded successfully!")
                     logger.info(f"   Total: {len(waypoints)} mission items ({len(survey_waypoints)} survey waypoints)")
                     return True
                 else:
-                    logger.error(f"❌ No mission ACK received")
+                    logger.error(f" No mission ACK received")
                     return False
                     
             finally:
@@ -1529,16 +1602,48 @@ class DroneConnection:
             # CRITICAL: Verify AUTO mode is actually set via HEARTBEAT (not telemetry)
             logger.info(f" Verifying AUTO mode activation via HEARTBEAT...")
             mode_confirmed = False
+            rtl_detected = False
+            
             for i in range(10):  # Try 10 times over 2 seconds
+                # Check for STATUSTEXT messages that explain mode changes
+                statustext_msg = self.master.recv_match(type='STATUSTEXT', blocking=False, timeout=0.05)
+                if statustext_msg:
+                    text = statustext_msg.text.decode('utf-8') if isinstance(statustext_msg.text, bytes) else str(statustext_msg.text)
+                    severity = statustext_msg.severity
+                    logger.warning(f"🔴 STATUSTEXT during AUTO activation: [{severity}] {text}")
+                    
+                    # Check if RTL was triggered
+                    if 'RTL' in text.upper():
+                        rtl_detected = True
+                        logger.error(f"❌❌❌ RTL TRIGGERED: {text}")
+                
                 msg = self.master.recv_match(type='HEARTBEAT', timeout=0.2)
                 if msg:
                     actual_mode = mavutil.mode_string_v10(msg)
                     logger.info(f"  HEARTBEAT #{i+1}: mode = {actual_mode}")
+                    
+                    # Detect RTL mode
+                    if 'RTL' in actual_mode.upper():
+                        rtl_detected = True
+                        logger.error(f"❌❌❌ DRONE SWITCHED TO RTL (not AUTO)!")
+                        logger.error(f"   This means AUTO mode was rejected by ArduPilot safety checks")
+                        logger.error(f"   Check STATUSTEXT messages above for the reason")
+                        
                     if 'AUTO' in actual_mode.upper():
                         mode_confirmed = True
                         logger.info(f"✅ AUTO mode CONFIRMED via HEARTBEAT")
                         break
                 time.sleep(0.1)
+            
+            if rtl_detected:
+                logger.error(f"❌ Drone entered RTL instead of AUTO mode!")
+                logger.error(f"   Most common causes:")
+                logger.error(f"   1. First waypoint too far (check FENCE_RADIUS parameter)")
+                logger.error(f"   2. EKF variance too high (wait 2+ minutes after GPS lock)")
+                logger.error(f"   3. Mission validation failed (bad waypoint parameters)")
+                logger.error(f"   4. Battery failsafe (check battery voltage/percentage)")
+                logger.error(f"   5. Geofence violation (first WP > FENCE_RADIUS)")
+                return {'success': False, 'error': 'Drone entered RTL instead of AUTO. Check STATUSTEXT messages for reason.'}
             
             if not mode_confirmed:
                 logger.error(f"❌ AUTO mode NOT confirmed via HEARTBEAT after 10 attempts")

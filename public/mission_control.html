@@ -123,22 +123,15 @@
                     <div class="parameter-grid">
                         <div class="param-group">
                             <label>Altitude (m)</label>
-                            <input type="number" id="altitude" value="15" min="10" max="200" step="1">
+                            <input class="param-input" value="10" readonly style="background:#f0f0f0; color:#888;" />
                         </div>
-                        
                         <div class="param-group">
                             <label>Speed (m/s)</label>
-                            <input type="number" id="speed" value="2" min="1" max="15" step="0.5">
+                            <input class="param-input" value="3" readonly style="background:#f0f0f0; color:#888;" />
                         </div>
-                        
                         <div class="param-group">
                             <label>Overlap (%)</label>
-                            <input type="number" id="overlap" value="70" min="50" max="90" step="5">
-                        </div>
-                        
-                        <div class="param-group">
-                            <label>Grid Angle (°)</label>
-                            <input type="number" id="gridAngle" value="0" min="0" max="180" step="5">
+                            <input class="param-input" value="20" readonly style="background:#f0f0f0; color:#888;" />
                         </div>
                     </div>
                     
@@ -618,12 +611,14 @@
                 <!-- System Alerts -->
                 <div class="panel-section">
                     <h3 class="section-title">
-                        <span class="section-icon">⚠️</span>
                         Alerts
+                        <label style="float:right; font-size:0.9em; font-weight:normal;">
+                            <input type="checkbox" id="showPiMessages" checked style="vertical-align:middle; margin-right:4px;">Show Pi Messages
+                        </label>
                     </h3>
                     <div class="alerts-container" id="alertsContainer">
                         <div class="alert-item alert-info">
-                            <span class="alert-icon">ℹ️</span>
+                            <span class="alert-icon"></span>
                             <span class="alert-text">System ready</span>
                         </div>
                     </div>

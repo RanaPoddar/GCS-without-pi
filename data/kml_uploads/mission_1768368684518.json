@@ -1,0 +1,204 @@
+{
+  "version": "1.0",
+  "mission_name": "KML_Survey_Mission",
+  "created": "auto-generated",
+  "frame_type": "MAV_FRAME_GLOBAL_RELATIVE_ALT",
+  "home_position": {
+    "latitude": 28.422301406471476,
+    "longitude": 77.52494989233628,
+    "altitude": 0
+  },
+  "mission_params": {
+    "altitude_m": 8.0,
+    "speed_ms": 2.0,
+    "swath_width_m": 8.424027492905841,
+    "lateral_overlap": 0.2,
+    "field_length_m": 91.59624908057714,
+    "field_width_m": 58.44048043714978,
+    "num_passes": 9,
+    "estimated_time_min": 5.040491437704168
+  },
+  "waypoints": [
+    {
+      "id": 1,
+      "seq": 0,
+      "latitude": 28.42200350640865,
+      "longitude": 77.52473133066843,
+      "altitude": 8.0,
+      "speed": 2.0,
+      "command": "NAV_WAYPOINT",
+      "frame": "MAV_FRAME_GLOBAL_RELATIVE_ALT"
+    },
+    {
+      "id": 2,
+      "seq": 1,
+      "latitude": 28.42200350640865,
+      "longitude": 77.5250269174728,
+      "altitude": 8.0,
+      "speed": 2.0,
+      "command": "NAV_WAYPOINT",
+      "frame": "MAV_FRAME_GLOBAL_RELATIVE_ALT"
+    },
+    {
+      "id": 3,
+      "seq": 2,
+      "latitude": 28.422079180735157,
+      "longitude": 77.525047732521,
+      "altitude": 8.0,
+      "speed": 2.0,
+      "command": "NAV_WAYPOINT",
+      "frame": "MAV_FRAME_GLOBAL_RELATIVE_ALT"
+    },
+    {
+      "id": 4,
+      "seq": 3,
+      "latitude": 28.422079180735157,
+      "longitude": 77.52472961484348,
+      "altitude": 8.0,
+      "speed": 2.0,
+      "command": "NAV_WAYPOINT",
+      "frame": "MAV_FRAME_GLOBAL_RELATIVE_ALT"
+    },
+    {
+      "id": 5,
+      "seq": 4,
+      "latitude": 28.422154855061663,
+      "longitude": 77.52475232430129,
+      "altitude": 8.0,
+      "speed": 2.0,
+      "command": "NAV_WAYPOINT",
+      "frame": "MAV_FRAME_GLOBAL_RELATIVE_ALT"
+    },
+    {
+      "id": 6,
+      "seq": 5,
+      "latitude": 28.422154855061663,
+      "longitude": 77.5250685475692,
+      "altitude": 8.0,
+      "speed": 2.0,
+      "command": "NAV_WAYPOINT",
+      "frame": "MAV_FRAME_GLOBAL_RELATIVE_ALT"
+    },
+    {
+      "id": 7,
+      "seq": 6,
+      "latitude": 28.42223052938817,
+      "longitude": 77.52508936261741,
+      "altitude": 8.0,
+      "speed": 2.0,
+      "command": "NAV_WAYPOINT",
+      "frame": "MAV_FRAME_GLOBAL_RELATIVE_ALT"
+    },
+    {
+      "id": 8,
+      "seq": 7,
+      "latitude": 28.42223052938817,
+      "longitude": 77.5247750337591,
+      "altitude": 8.0,
+      "speed": 2.0,
+      "command": "NAV_WAYPOINT",
+      "frame": "MAV_FRAME_GLOBAL_RELATIVE_ALT"
+    },
+    {
+      "id": 9,
+      "seq": 8,
+      "latitude": 28.422306203714676,
+      "longitude": 77.52479774321691,
+      "altitude": 8.0,
+      "speed": 2.0,
+      "command": "NAV_WAYPOINT",
+      "frame": "MAV_FRAME_GLOBAL_RELATIVE_ALT"
+    },
+    {
+      "id": 10,
+      "seq": 9,
+      "latitude": 28.422306203714676,
+      "longitude": 77.52511017766561,
+      "altitude": 8.0,
+      "speed": 2.0,
+      "command": "NAV_WAYPOINT",
+      "frame": "MAV_FRAME_GLOBAL_RELATIVE_ALT"
+    },
+    {
+      "id": 11,
+      "seq": 10,
+      "latitude": 28.422381878041183,
+      "longitude": 77.52513099271381,
+      "altitude": 8.0,
+      "speed": 2.0,
+      "command": "NAV_WAYPOINT",
+      "frame": "MAV_FRAME_GLOBAL_RELATIVE_ALT"
+    },
+    {
+      "id": 12,
+      "seq": 11,
+      "latitude": 28.422381878041183,
+      "longitude": 77.52482045267473,
+      "altitude": 8.0,
+      "speed": 2.0,
+      "command": "NAV_WAYPOINT",
+      "frame": "MAV_FRAME_GLOBAL_RELATIVE_ALT"
+    },
+    {
+      "id": 13,
+      "seq": 12,
+      "latitude": 28.42245755236769,
+      "longitude": 77.52484316213254,
+      "altitude": 8.0,
+      "speed": 2.0,
+      "command": "NAV_WAYPOINT",
+      "frame": "MAV_FRAME_GLOBAL_RELATIVE_ALT"
+    },
+    {
+      "id": 14,
+      "seq": 13,
+      "latitude": 28.42245755236769,
+      "longitude": 77.52515180776201,
+      "altitude": 8.0,
+      "speed": 2.0,
+      "command": "NAV_WAYPOINT",
+      "frame": "MAV_FRAME_GLOBAL_RELATIVE_ALT"
+    },
+    {
+      "id": 15,
+      "seq": 14,
+      "latitude": 28.422533226694195,
+      "longitude": 77.52517262281022,
+      "altitude": 8.0,
+      "speed": 2.0,
+      "command": "NAV_WAYPOINT",
+      "frame": "MAV_FRAME_GLOBAL_RELATIVE_ALT"
+    },
+    {
+      "id": 16,
+      "seq": 15,
+      "latitude": 28.422533226694195,
+      "longitude": 77.52486587159035,
+      "altitude": 8.0,
+      "speed": 2.0,
+      "command": "NAV_WAYPOINT",
+      "frame": "MAV_FRAME_GLOBAL_RELATIVE_ALT"
+    },
+    {
+      "id": 17,
+      "seq": 16,
+      "latitude": 28.422608901020702,
+      "longitude": 77.52488858104816,
+      "altitude": 8.0,
+      "speed": 2.0,
+      "command": "NAV_WAYPOINT",
+      "frame": "MAV_FRAME_GLOBAL_RELATIVE_ALT"
+    },
+    {
+      "id": 18,
+      "seq": 17,
+      "latitude": 28.422608901020702,
+      "longitude": 77.52516948124176,
+      "altitude": 8.0,
+      "speed": 2.0,
+      "command": "NAV_WAYPOINT",
+      "frame": "MAV_FRAME_GLOBAL_RELATIVE_ALT"
+    }
+  ],
+  "rtl_altitude": 18.0
+}

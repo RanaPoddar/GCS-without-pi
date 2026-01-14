@@ -30,10 +30,18 @@ const server = http.createServer(app);
 const io = socketIO(server, config.SOCKET_CONFIG);
 
 
+
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(config.PUBLIC_DIR));
+
+// Forward mavlink_detection events from external services to all dashboard clients
+io.on('connection', (socket) => {
+  socket.on('mavlink_detection', (data) => {
+    io.emit('mavlink_detection', data);
+  });
+});
 
 // Serve mission files
 app.use('/missions', express.static(config.MISSIONS_DIR));
@@ -45,6 +53,17 @@ app.use('/api/mission', missionRoutes);
 app.use('/api/missions', missionRoutes);
 app.use('/api/waypoints', waypointRoutes);
 app.use('/api/sprayer', sprayerRoutes);
+
+// MAVLink detection forwarding endpoint
+app.post('/api/mavlink-detection', (req, res) => {
+  const detection = req.body;
+  logger.info(`📡 MAVLink detection received: ${detection.detection_id} from Drone ${detection.drone_id}`);
+  
+  // Emit to all connected clients
+  io.emit('mavlink_detection', detection);
+  
+  res.json({ success: true, message: 'Detection forwarded' });
+});
 
 // Create necessary directories
 [config.PUBLIC_DIR, config.DATA_DIR, config.MISSIONS_DIR, config.KML_UPLOADS_DIR].forEach(dir => {

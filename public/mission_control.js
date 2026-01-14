@@ -32,6 +32,7 @@ class MissionControl {
         this.initMap();
         this.initSocket();
         this.initEventListeners();
+        this.addPiMessagesToggleListener();
         this.initGCSLocation();
         
         // Initialize drone connection status as disconnected
@@ -296,6 +297,12 @@ class MissionControl {
         this.socket.on('detection', (data) => {
             this.handleDetection(data);
         });
+
+        // MAVLink detection from Pi
+        this.socket.on('mavlink_detection', (data) => {
+            console.log('MAVLink detection received:', data);
+            this.handleDetection(data);
+        });
         
         // Crop detection from Pi
         this.socket.on('crop_detection', (data) => {
@@ -362,6 +369,11 @@ class MissionControl {
         
         this.socket.on('spray_queue_updated', (data) => {
             document.getElementById('sprayQueueCount').textContent = data.queue_length || 0;
+        });
+        
+        // STATUSTEXT messages from autopilot
+        this.socket.on('statustext_messages', (data) => {
+            this.handleStatustextMessages(data);
         });
         
         // Initialize spray control
@@ -560,8 +572,9 @@ class MissionControl {
             // Create FormData to upload file to server
             const formData = new FormData();
             formData.append('kml', file);
-            formData.append('altitude', document.getElementById('altitude').value);
-            formData.append('speed', document.getElementById('speed').value);
+            formData.append('altitude', 8);
+            formData.append('speed', 2);
+            formData.append('overlap', 0.10);
             formData.append('pi_id', 'mission_control');
             
             // Upload to server for storage
@@ -1087,42 +1100,41 @@ class MissionControl {
     
     handleDetectionStatus(data) {
         console.log('Detection status update:', data);
-        
         // Determine drone ID from pi_id
         const droneId = data.pi_id === 'detection_drone_pi_pushpak' ? 1 : 2;
         const statusElement = document.getElementById(`detection${droneId}Status`);
-        
+        const showPi = this.isShowPiMessagesEnabled();
         if (statusElement) {
             if (data.status === 'active') {
                 statusElement.textContent = '🟢 Active';
                 statusElement.style.color = '#22c55e';
-                this.addAlert(`Drone ${droneId} detection started`, 'success');
+                if (showPi) this.addAlert(`[Pi] Drone ${droneId} detection started`, 'success');
             } else if (data.status === 'inactive') {
                 statusElement.textContent = '⚪ Inactive';
                 statusElement.style.color = '#64748b';
-                this.addAlert(`Drone ${droneId} detection stopped`, 'warning');
+                if (showPi) this.addAlert(`[Pi] Drone ${droneId} detection stopped`, 'warning');
             } else if (data.status === 'failed') {
                 statusElement.textContent = '🔴 Failed';
                 statusElement.style.color = '#ef4444';
-                this.addAlert(`Drone ${droneId} detection failed: ${data.message}`, 'error');
+                if (showPi) this.addAlert(`[Pi] Drone ${droneId} detection failed: ${data.message}`, 'error');
             }
         }
     }
     
     handleDetectionStats(data) {
         console.log('Detection stats update:', data);
-        
         const droneId = data.pi_id === 'detection_drone_pi_pushpak' ? 1 : 2;
         const countElement = document.getElementById(`drone${droneId}Detections`);
-        
+        const showPi = this.isShowPiMessagesEnabled();
         if (countElement && data.stats) {
             countElement.textContent = data.stats.detection_count || data.stats.total_detections || 0;
+            if (showPi) this.addAlert(`[Pi] Drone ${droneId} detection stats updated`, 'info');
         }
     }
     
     // Detection Handler
     handleDetection(data) {
-        if (data.latitude && data.longitude) {
+        if (typeof data.latitude === 'number' && typeof data.longitude === 'number') {
             const marker = L.circleMarker([data.latitude, data.longitude], {
                 radius: 6,
                 fillColor: '#ef4444',
@@ -1131,7 +1143,6 @@ class MissionControl {
                 opacity: 1,
                 fillOpacity: 0.8
             }).addTo(this.map);
-            
             marker.bindPopup(`
                 <div style="color: #fff;">
                     <strong>Detection</strong><br>
@@ -1140,24 +1151,48 @@ class MissionControl {
                     Time: ${new Date(data.timestamp).toLocaleTimeString()}
                 </div>
             `);
-            
             this.detectionMarkers.push(marker);
-            
             // Update detection count
             const droneId = data.drone_id || 1;
             const countEl = document.getElementById(`drone${droneId}Detections`);
             const currentCount = parseInt(countEl.textContent) || 0;
             countEl.textContent = currentCount + 1;
-            
             // Add to detection log
             this.addDetectionToLog(data);
-            
-            const alertMsg = data.type === 'manual' 
-                ? `Manual detection test by Drone ${droneId}` 
-                : `Detection by Drone ${droneId}`;
-            this.addAlert(alertMsg, 'warning');
+            // Only show Pi messages if enabled (for crop_detection events)
+            const showPi = this.isShowPiMessagesEnabled();
+            if (data.source === 'pi' || data.pi_id || data.is_pi || data.type === 'automatic') {
+                if (showPi) {
+                    const alertMsg = data.type === 'manual' 
+                        ? `[Pi] Manual detection test by Drone ${droneId}` 
+                        : `[Pi] Detection by Drone ${droneId}`;
+                    this.addAlert(alertMsg, 'warning');
+                }
+            } else {
+                // For non-Pi/manual detections, always show
+                const alertMsg = data.type === 'manual' 
+                    ? `Manual detection test by Drone ${droneId}` 
+                    : `Detection by Drone ${droneId}`;
+                this.addAlert(alertMsg, 'warning');
+            }
         }
     }
+        // Helper to check if Pi messages should be shown
+        isShowPiMessagesEnabled() {
+            const cb = document.getElementById('showPiMessages');
+            return cb && cb.checked;
+        }
+
+        // Add event listener for Pi messages toggle
+        addPiMessagesToggleListener() {
+            const cb = document.getElementById('showPiMessages');
+            if (cb) {
+                cb.addEventListener('change', () => {
+                    // Optionally clear or refresh alerts/console if needed
+                    // For now, do nothing (future: could filter existing messages)
+                });
+            }
+        }
     
     // Mission Status Handler
     handleMissionStatus(data) {
@@ -1278,6 +1313,41 @@ class MissionControl {
         
         const elapsed = Math.floor((Date.now() - this.missionStartTime) / 1000);
         document.getElementById('elapsedTime').textContent = this.formatTime(elapsed);
+    }
+    
+    /**
+     * Handle STATUSTEXT messages from autopilot
+     */
+    handleStatustextMessages(data) {
+        if (!data || !data.messages || data.messages.length === 0) return;
+        
+        const droneId = data.drone_id;
+        
+        data.messages.forEach(msg => {
+            const text = msg.text || '';
+            const severity = msg.severity || 6;
+            
+            // Determine alert type based on severity
+            // MAVLink severity: 0=EMERGENCY, 1=ALERT, 2=CRITICAL, 3=ERROR, 4=WARNING, 5=NOTICE, 6=INFO, 7=DEBUG
+            let type = 'info';
+            if (severity <= 2) {
+                type = 'error';  // EMERGENCY, ALERT, CRITICAL
+            } else if (severity === 3) {
+                type = 'error';  // ERROR
+            } else if (severity === 4) {
+                type = 'warning'; // WARNING
+            }
+            
+            // Highlight critical messages
+            const lowerText = text.toLowerCase();
+            if (lowerText.includes('rtl') || lowerText.includes('failsafe') || 
+                lowerText.includes('fence') || lowerText.includes('battery low')) {
+                type = 'error';
+            }
+            
+            // Add to alerts with drone prefix
+            this.addAlert(`[Drone ${droneId}] ${text}`, type);
+        });
     }
     
     addAlert(message, type = 'info') {
@@ -1834,7 +1904,7 @@ class MissionControl {
                     if (this.missionInterval) {
                         clearInterval(this.missionInterval);
                     }
-                }
+ }
                 
             } catch (error) {
                 console.error('Mission status error:', error);

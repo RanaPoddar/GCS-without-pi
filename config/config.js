@@ -18,16 +18,23 @@ const config = {
       origin: "*",
       methods: ["GET", "POST"]
     },
-    pingTimeout: 60000,
-    pingInterval: 25000
+    pingTimeout: 120000,      // Increased to 120 seconds
+    pingInterval: 25000,
+    connectTimeout: 60000,     // Connection timeout 60 seconds
+    transports: ['websocket', 'polling'],  // Allow both transports
+    allowUpgrades: true,       // Allow transport upgrades
+    perMessageDeflate: false,  // Disable compression for better performance
+    httpCompression: false,
+    maxHttpBufferSize: 1e8     // 100MB for large payloads
   },
 
   // Drone configurations
   DRONE_CONFIGS: [
     {
       drone_id: 1,
-      port: process.env.DRONE1_PORT || '/dev/ttyUSB0',
-      baudRate: parseInt(process.env.DRONE1_BAUD) || 57600
+      port: process.env.DRONE1_PORT || 'COM4',  // F10 RC ground module via USB Type-C
+      baudRate: parseInt(process.env.DRONE1_BAUD) || 57600,
+      name: 'Detection Drone via F10 RC'
     },
     {
       drone_id: 2,

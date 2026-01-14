@@ -583,6 +583,15 @@
                     <button class="btn-primary" style="flex: 1;" onclick="getDetectionStats()">📊 Get Stats</button>
                 </div>
 
+                <div class="controls" style="margin-bottom: 15px; display: flex; gap: 10px;">
+                    <button class="btn-primary" style="flex: 1;" onclick="checkMavlinkDetection()">📡 Check MAVLink Telemetry</button>
+                </div>
+
+                <div id="mavlinkStatus" style="margin-bottom: 15px; padding: 10px; border-radius: 5px; display: none;">
+                    <strong>MAVLink Detection Status:</strong>
+                    <div id="mavlinkStatusText" style="margin-top: 5px;"></div>
+                </div>
+
                 <div id="detectionCount" style="margin-bottom: 15px; font-size: 1.1em; color: #666;">
                     Total Detections: <strong id="totalDetections">0</strong>
                 </div>
@@ -669,8 +678,10 @@
                 
                 pis.forEach(pi => {
                     const option = document.createElement('option');
-                    option.value = pi.id;
-                    option.textContent = pi.id;
+                    // Use pi.id for display, but also check for drone_id
+                    const piId = pi.id || pi.drone_id || 'unknown';
+                    option.value = piId;
+                    option.textContent = piId;
                     select.appendChild(option);
                 });
                 
@@ -678,7 +689,7 @@
                     select.value = currentValue;
                 } else if (pis.length > 0) {
                     // Auto-select first Pi if none selected
-                    select.value = pis[0].id;
+                    select.value = pis[0].id || pis[0].drone_id || '';
                 }
             });
             
@@ -697,6 +708,17 @@
         function requestPiList() {
             socket.emit('request_pi_list');
         }
+
+        // Update dropdown when drones connect/disconnect via telemetry
+        socket.on('drone_connected', (data) => {
+            addLog(`Drone ${data.drone_id} connected via telemetry`, 'success');
+            requestPiList();
+        });
+
+        socket.on('drone_disconnected', (data) => {
+            addLog(`Drone ${data.drone_id} disconnected`, 'info');
+            requestPiList();
+        });
 
         // Request connected Pis on load and every 5 seconds
         setTimeout(() => {
@@ -737,9 +759,30 @@
             }
         });
 
+        // Listen for pi_stats (telemetry-only mode from PyMAVLink)
+        socket.on('pi_stats', (data) => {
+            const currentPi = selectedStatsPi || document.getElementById('systemStatsPiSelect').value;
+            // Convert both to strings for comparison since dropdown values are strings
+            if (!currentPi || String(data.drone_id) !== String(currentPi)) return;
+            
+            // Update Pi system stats from telemetry
+            document.getElementById('cpuUsage').textContent = data.cpu_percent?.toFixed(1) || '--';
+            document.getElementById('cpuTemp').textContent = data.temperature?.toFixed(1) || '--';
+            document.getElementById('memoryUsage').textContent = data.memory_percent?.toFixed(1) || '--';
+            document.getElementById('diskUsage').textContent = data.disk_percent?.toFixed(1) || '--';
+            
+            const statusBadge = document.getElementById('piStatusBadge');
+            statusBadge.className = 'badge online';
+            statusBadge.textContent = 'Online (Telemetry)';
+            
+            addLog(`📊 Pi stats: CPU=${data.cpu_percent?.toFixed(1)}% MEM=${data.memory_percent?.toFixed(1)}% TEMP=${data.temperature?.toFixed(1)}°C`, 'info');
+        });
+        
+        // Keep legacy system_stats for WiFi mode compatibility
         socket.on('system_stats', (data) => {
             const currentPi = selectedStatsPi || document.getElementById('systemStatsPiSelect').value;
-            if (!currentPi || data.pi_id !== currentPi) return;
+            // Convert both to strings for comparison
+            if (!currentPi || String(data.pi_id) !== String(currentPi)) return;
             
             const stats = data.stats || {};
             
@@ -751,17 +794,18 @@
             
             const statusBadge = document.getElementById('piStatusBadge');
             statusBadge.className = 'badge online';
-            statusBadge.textContent = 'Online';
+            statusBadge.textContent = 'Online (WiFi)';
         });
 
         // Pixhawk telemetry
         socket.on('drone_telemetry', (data) => {
             const currentPi = selectedStatsPi || document.getElementById('systemStatsPiSelect').value;
-            if (!currentPi || data.pi_id !== currentPi) {
+            // Convert both to strings for comparison
+            if (!currentPi || String(data.drone_id) !== String(currentPi)) {
                 return;
             }
             
-            addLog(`Telemetry from ${data.pi_id}`, 'info');
+            addLog(`Telemetry from Drone ${data.drone_id}`, 'info');
             
             const telem = data.telemetry || {};
             
@@ -949,6 +993,60 @@
             socket.emit('get_detection_stats', { pi_id: piId });
             addLog(`Requesting detection stats from ${piId}`, 'info');
         }
+
+        // MAVLink Detection Telemetry Check
+        let mavlinkCheckTimeout;
+        let receivedMavlinkDetections = [];
+
+        function checkMavlinkDetection() {
+            const statusDiv = document.getElementById('mavlinkStatus');
+            const statusText = document.getElementById('mavlinkStatusText');
+            
+            // Show status div
+            statusDiv.style.display = 'block';
+            statusDiv.style.background = '#fff3cd';
+            statusDiv.style.border = '1px solid #ffc107';
+            statusText.innerHTML = '⏳ Listening for MAVLink detection messages...<br>Waiting for 10 seconds...';
+            
+            // Clear previous detections
+            receivedMavlinkDetections = [];
+            
+            // Set timeout to check after 10 seconds
+            if (mavlinkCheckTimeout) clearTimeout(mavlinkCheckTimeout);
+            
+            mavlinkCheckTimeout = setTimeout(() => {
+                if (receivedMavlinkDetections.length > 0) {
+                    // Found detections
+                    statusDiv.style.background = '#d4edda';
+                    statusDiv.style.border = '1px solid #28a745';
+                    statusText.innerHTML = `✅ <strong>SUCCESS!</strong> Received ${receivedMavlinkDetections.length} detection(s) via MAVLink telemetry<br>` +
+                        receivedMavlinkDetections.map(det => 
+                            `• ${det.detection_id} at (${det.latitude?.toFixed(6)}, ${det.longitude?.toFixed(6)}) - ${new Date(det.timestamp).toLocaleTimeString()}`
+                        ).join('<br>');
+                    addLog(`✅ MAVLink telemetry working - ${receivedMavlinkDetections.length} detection(s) received`, 'success');
+                } else {
+                    // No detections
+                    statusDiv.style.background = '#f8d7da';
+                    statusDiv.style.border = '1px solid #dc3545';
+                    statusText.innerHTML = '❌ <strong>NO DETECTIONS</strong> received via MAVLink telemetry<br>' +
+                        'Possible reasons:<br>' +
+                        '• Detection not enabled on Pi<br>' +
+                        '• MAVLink detection sender not active<br>' +
+                        '• No detections triggered during test period<br>' +
+                        '• MAVLink connection not established';
+                    addLog('❌ No MAVLink detection messages received', 'error');
+                }
+            }, 10000);
+            
+            addLog('📡 Checking MAVLink detection telemetry...', 'info');
+        }
+
+        // Listen for MAVLink detection messages
+        socket.on('mavlink_detection', (data) => {
+            console.log('📡 MAVLink detection received:', data);
+            receivedMavlinkDetections.push(data);
+            addLog(`📡 MAVLink detection: ${data.detection_id} at (${data.latitude?.toFixed(6)}, ${data.longitude?.toFixed(6)})`, 'success');
+        });
 
         // Initialize
         addLog('Dashboard loaded', 'info');
